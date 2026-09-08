@@ -1,0 +1,64 @@
+# ==========================================
+# Operating System & Editor Files
+# ==========================================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# ==========================================
+# Environment & Secrets
+# ==========================================
+.env
+.env.*
+!.env.example
+
+# ==========================================
+# Frontend (Svelte / Node / Vite)
+# ==========================================
+frontend/node_modules/
+frontend/dist/
+frontend/.svelte-kit/
+frontend/build/
+frontend/*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==========================================
+# Backend (Rust / Cargo)
+# ==========================================
+backend/target/
+backend/**/Cargo.lock
+backend/*.log
+
+# ==========================================
+# Application Storage & State
+# ==========================================
+# Ignore live SQLite DB and WAL journal files
+storage/database/*.db
+storage/database/*.db-wal
+storage/database/*.db-shm
+storage/database/*.sqlite
+storage/database/*.sqlite-wal
+storage/database/*.sqlite-shm
+
+# Ignore backup archives and backup logs
+storage/backups/*.db
+storage/backups/*.gz
+storage/backups/*.log
+
+# Voice notes, audio recordings, and media cache
+storage/audio/
+storage/media/
+storage/uploads/
+
+# Keep storage folder structure tracked in git
+!storage/database/.gitkeep
+!storage/backups/.gitkeep
