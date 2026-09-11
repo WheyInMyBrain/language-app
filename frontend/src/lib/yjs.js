@@ -3,31 +3,24 @@ import { WebsocketProvider } from 'y-websocket';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import { CONFIG } from './config.js';
 
-// Increment this string (e.g., 'v2', 'v3') whenever you restore a backup
-// to immediately orphan and bypass stale browser IndexedDB caches on all devices.
-export const DB_EPOCH = 'v1';
-
 const activeHandles = new Map();
 
 /**
  * Creates or retrieves a cached Yjs document synchronized with
- * local IndexedDB and the WebSocket server under the active DB_EPOCH.
+ * local IndexedDB and the WebSocket server.
  */
 export function createSyncedDoc(roomName, onStatusChange = null) {
-  // Prefix room name with current epoch for safe version isolation
-  const namespacedRoom = `${DB_EPOCH}:${roomName}`;
-
-  if (activeHandles.has(namespacedRoom)) {
-    return activeHandles.get(namespacedRoom);
+  if (activeHandles.has(roomName)) {
+    return activeHandles.get(roomName);
   }
 
   const doc = new Y.Doc();
 
   // 1. Instant local-first IndexedDB persistence
-  const idbProvider = new IndexeddbPersistence(namespacedRoom, doc);
+  const idbProvider = new IndexeddbPersistence(roomName, doc);
 
   // 2. Real-time WebSocket sync to Rust backend
-  const wsProvider = new WebsocketProvider(CONFIG.WS_BASE, namespacedRoom, doc);
+  const wsProvider = new WebsocketProvider(CONFIG.WS_BASE, roomName, doc);
 
   if (onStatusChange) {
     wsProvider.on('status', ({ status }) => {
@@ -37,7 +30,7 @@ export function createSyncedDoc(roomName, onStatusChange = null) {
 
   // Cleanup helper when leaving views or evicting docs
   const destroy = () => {
-    activeHandles.delete(namespacedRoom);
+    activeHandles.delete(roomName);
     wsProvider.destroy();
     idbProvider.destroy();
     doc.destroy();
@@ -46,7 +39,7 @@ export function createSyncedDoc(roomName, onStatusChange = null) {
   const handle = { doc, idbProvider, wsProvider, destroy };
 
   // Store in active cache
-  activeHandles.set(namespacedRoom, handle);
+  activeHandles.set(roomName, handle);
 
   return handle;
 }
@@ -56,6 +49,5 @@ export function createSyncedDoc(roomName, onStatusChange = null) {
  * Used by services (e.g., dailyLogService) to mutate indexes and metadata in-memory.
  */
 export function getDocHandle(roomName) {
-  const namespacedRoom = `${DB_EPOCH}:${roomName}`;
-  return activeHandles.get(namespacedRoom) || null;
+  return activeHandles.get(roomName) || null;
 }
