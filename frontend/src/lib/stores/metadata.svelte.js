@@ -168,6 +168,46 @@ class MetadataStore {
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
   }
+
+  /**
+   * Adds a new language document to the global registry
+   */
+  addLanguage(languageConfig) {
+    if (!this.#docHandle?.doc) return;
+    const doc = this.#docHandle.doc;
+    const langsMap = doc.getMap('languages');
+
+    doc.transact(() => {
+      langsMap.set(languageConfig.code, languageConfig);
+    });
+
+    this.languages = langsMap.toJSON();
+  }
+
+  /**
+   * Updates an existing language configuration (goals, colors, tones)
+   */
+  updateLanguageConfig(code, partialConfig) {
+    if (!this.#docHandle?.doc) return;
+    const doc = this.#docHandle.doc;
+    const langsMap = doc.getMap('languages');
+    const existing = langsMap.get(code) || {};
+
+    const updated = {
+      ...existing,
+      ...partialConfig,
+      goals: { ...(existing.goals || {}), ...(partialConfig.goals || {}) },
+      milestones: { ...(existing.milestones || {}), ...(partialConfig.milestones || {}) },
+      colors: { ...(existing.colors || {}), ...(partialConfig.colors || {}) },
+      tones: { ...(existing.tones || {}), ...(partialConfig.tones || {}) }
+    };
+
+    doc.transact(() => {
+      langsMap.set(code, updated);
+    });
+
+    this.languages = langsMap.toJSON();
+  }
 }
 
 export const metadataStore = new MetadataStore();

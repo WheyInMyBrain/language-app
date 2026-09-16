@@ -13,6 +13,7 @@
   import DayPage from './pages/DayPage.svelte';
   import QuizPage from './pages/QuizPage.svelte';
   import LibraryPage from './pages/LibraryPage.svelte';
+  import SettingsPage from './pages/SettingsPage.svelte';
 
   let activeRoute = $state('select-language');
   let selectedDate = $state(null);
@@ -225,6 +226,8 @@
           <QuizPage langCode={metadataStore.activeLanguage} onBack={() => navigateTo('dashboard')} />
         {:else if activeRoute === 'library'}
           <LibraryPage onSelectDate={(date) => navigateTo('day', date)} />
+        {:else if activeRoute === 'settings'}
+          <SettingsPage />
         {/if}
       </main>
 
@@ -383,6 +386,23 @@
           </div>
         {/if}
       </section>
+
+      <!-- 6. Settings Button -->
+      <button
+        type="button"
+        onclick={() => navigateTo('settings')}
+        class="w-full text-left px-3.5 py-2.5 rounded-xl border font-bold flex items-center justify-between transition-all cursor-pointer {activeRoute === 'settings'
+          ? 'border-[var(--interactive-accent,var(--text-primary))] bg-[var(--bg-base)] ring-1 ring-[var(--interactive-accent,var(--text-primary))]'
+          : 'border-[var(--border-card)] bg-[var(--bg-base)] hover:bg-[var(--bg-surface-active)]'}"
+      >
+        <div class="flex items-center gap-2">
+          <span>⚙️</span>
+          <span class={activeRoute === 'settings' ? 'text-[var(--interactive-accent,var(--text-primary))]' : 'text-[var(--text-primary)]'}>
+            Language Settings
+          </span>
+        </div>
+        <span class="text-[var(--text-muted)] font-mono text-xs">→</span>
+      </button>
     </RightEdgeDrawer>
   {/if}
 
