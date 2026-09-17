@@ -194,7 +194,7 @@
   }
 </script>
 
-<div class="max-w-md mx-auto space-y-8 pt-2 pb-24 px-1">
+<div class="w-full max-w-md lg:max-w-4xl xl:max-w-5xl mx-auto space-y-8 pt-2 pb-24 px-1 lg:px-4">
   {#if !isLoaded}
     <div class="py-12 text-center text-xs text-[var(--text-muted)] animate-pulse">
       Syncing session for {date}...

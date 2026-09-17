@@ -44,7 +44,7 @@
   }
 </script>
 
-<div class="w-full max-w-2xl mx-auto space-y-4 pt-2 pb-16 px-1 select-none">
+<div class="w-full max-w-md lg:max-w-4xl xl:max-w-5xl mx-auto space-y-8 pt-2 pb-24 px-1 lg:px-4">
   <!-- Header Card -->
   <div class="flex items-center justify-between p-3.5 sm:p-4 rounded-2xl border border-[var(--border-card)] bg-[var(--bg-surface)] shadow-xs">
     <div class="flex items-center gap-2.5 min-w-0">

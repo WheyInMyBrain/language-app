@@ -19,7 +19,7 @@
   let totalWords = $derived((vocabIndexStore.entries || []).length);
 </script>
 
-<div class="max-w-2xl mx-auto py-4 px-3 space-y-7 pb-16">
+<div class="w-full max-w-md lg:max-w-4xl xl:max-w-5xl mx-auto space-y-8 pt-2 pb-24 px-1 lg:px-4">
   <!-- Page Header & Summary Strip -->
   <header class="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-[var(--border-card)]">
     <div>

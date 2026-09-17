@@ -6,7 +6,7 @@
   let { onSelectDate } = $props();
 </script>
 
-<section class="max-w-md mx-auto space-y-4 pt-2 pb-8 px-1">
+<section class="w-full max-w-md lg:max-w-4xl xl:max-w-5xl mx-auto space-y-8 pt-2 pb-24 px-1 lg:px-4">
   <!-- 1. Priority Hub / Apple Activity Rings -->
   <TodayActionHub {onSelectDate} />
 

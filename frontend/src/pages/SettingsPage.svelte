@@ -39,7 +39,7 @@
   }
 </script>
 
-<div class="max-w-xl mx-auto space-y-6 pb-12">
+<div class="w-full max-w-md lg:max-w-4xl xl:max-w-5xl mx-auto space-y-8 pt-2 pb-24 px-1 lg:px-4">
   <div class="flex items-center justify-between border-b border-[var(--border-card)] pb-4">
     <div>
       <h1 class="text-xl font-bold text-[var(--text-primary)]">

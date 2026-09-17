@@ -36,7 +36,7 @@
   }
 </script>
 
-<div class="max-w-md mx-auto pt-6 pb-4 px-1 space-y-6">
+<div class="w-full max-w-md lg:max-w-4xl xl:max-w-5xl mx-auto space-y-8 pt-2 pb-24 px-1 lg:px-4">
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold tracking-tight text-[var(--text-primary)]">
       Select Language
