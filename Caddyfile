@@ -1,11 +1,17 @@
 :80 {
-    # Route all API traffic to Rust backend
-    handle /api* {
-        reverse_proxy backend:3000
-    }
+    encode gzip zstd
 
-    # Route frontend and everything else to Node
-    handle {
-        reverse_proxy frontend:3000
+    # Route API, WebSockets, Audio, and Ping to backend container
+    @backend_traffic {
+        path /api*
+        path /ws*
+        path /audio*
+        path /ping*
     }
+    reverse_proxy @backend_traffic backend:3000
+
+    # Everything else is frontend SPA
+    root * /srv/dist
+    file_server
+    try_files {path} /index.html
 }

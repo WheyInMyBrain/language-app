@@ -2,20 +2,27 @@
 FROM rust:1.98.1-bookworm AS builder
 WORKDIR /app
 
+# Cache dependency layer
 COPY Cargo.toml Cargo.lock ./
-# Create dummy main to cache dependency compilation
 RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
 
+# Build real source code
 COPY . .
-# Update modified timestamp so Cargo rebuilds with real sources
 RUN touch src/main.rs && cargo build --release
 
 # Runner stage
 FROM debian:bookworm-slim
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Replace <your-binary-name> with the name in [package] name = "..." in Cargo.toml
 COPY --from=builder /app/target/release/<your-binary-name> /app/server
 
 EXPOSE 3000
+
+ENV RUST_LOG=info
 CMD ["/app/server"]

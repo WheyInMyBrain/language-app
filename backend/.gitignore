@@ -1,2 +1,3 @@
 /target
 language_database.db
+.env

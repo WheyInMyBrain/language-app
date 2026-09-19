@@ -9,6 +9,7 @@ use axum::{
 };
 use std::{
     collections::HashMap,
+    env,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -21,13 +22,10 @@ use state::AppState;
 
 #[tokio::main]
 async fn main() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let project_root = manifest_dir
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or(manifest_dir);
+    // 1. Storage directory from env (fallback: "./storage")
+    let storage_dir = env::var("STORAGE_DIR").unwrap_or_else(|_| "./storage".to_string());
+    let storage_root = PathBuf::from(storage_dir);
 
-    let storage_root = project_root.join("storage");
     let db_dir = storage_root.join("database");
     let audio_root = storage_root.join("audio");
 
@@ -39,25 +37,11 @@ async fn main() {
         .expect("Failed to initialize storage/audio directory");
 
     let db_path = db_dir.join("language_database.db");
-
-    // Copy initial DB from backend/src if missing in storage/database
-    let initial_db = project_root
-        .join("backend")
-        .join("src")
-        .join("language_database.db");
-
-    if !db_path.exists() && initial_db.exists() {
-        fs::copy(&initial_db, &db_path)
-            .await
-            .expect("Failed to migrate initial database into storage/database");
-        println!("📦 Migrated database into storage: {:?}", db_path);
-    }
-
     let conn = db::init_db(&db_path);
 
     let state = Arc::new(AppState {
         audio_root: audio_root.clone(),
-        db_path,
+        db_path: db_path.clone(),
         rooms: tokio::sync::RwLock::new(HashMap::new()),
         db_conn: Mutex::new(conn),
     });
@@ -69,23 +53,34 @@ async fn main() {
 
     let app = Router::new()
         .route("/ping", get(audio::handle_ping))
+        .route("/api/ping", get(audio::handle_ping))
+
+        // WebSocket protocol
         .route("/ws/{room_name}", get(ws::handle_ws_upgrade))
+
+        // Audio upload endpoint
         .route(
             "/api/audio/{lang}/{date}/{category}/{index}",
             post(audio::handle_audio_upload),
         )
+
+        // Static audio file streaming
         .nest_service("/audio", ServeDir::new(&audio_root))
         .layer(cors)
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
-        .await
-        .unwrap();
+    // 2. Port from env (fallback: "3000")
+    let port = env::var("PORT").unwrap_or_else(|_| "3000".to_string());
+    let bind_addr = format!("0.0.0.0:{}", port);
 
-    println!("⚡ Language App Server: http://0.0.0.0:8080");
-    println!("⚡ Database: {:?}", db_dir.join("language_database.db"));
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
+        .await
+        .unwrap_or_else(|err| panic!("Failed to bind to {}: {}", bind_addr, err));
+
+    println!("⚡ Language App Server: http://{}", bind_addr);
+    println!("⚡ Database: {:?}", db_path);
     println!("⚡ Audio Root: {:?}", audio_root);
-    println!("⚡ WebSocket Sync: ws://0.0.0.0:8080/ws/{{room_name}}");
+    println!("⚡ WebSocket Sync: ws://{}/ws/{{room_name}}", bind_addr);
 
     axum::serve(listener, app).await.unwrap();
 }
