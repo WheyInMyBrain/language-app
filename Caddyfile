@@ -1,0 +1,11 @@
+:80 {
+    # Route all API traffic to Rust backend
+    handle /api* {
+        reverse_proxy backend:3000
+    }
+
+    # Route frontend and everything else to Node
+    handle {
+        reverse_proxy frontend:3000
+    }
+}
