@@ -5,12 +5,19 @@ edition = "2024"
 
 [dependencies]
 axum = { version = "0.8.9", features = ["ws"] }
+chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
+flate2 = "1.1.10"
 futures-util = "0.3.34"
+rand = "0.10.3"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["full"] }
 tower-http = { version = "0.7.1", features = ["cors", "fs"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+web-push = "0.11.0"
 yrs = { version = "0.27.4", features = ["sync"] }
 
 [profile.release]

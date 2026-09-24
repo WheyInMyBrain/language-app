@@ -1,6 +1,7 @@
 <script>
   import { onMount, tick } from 'svelte';
   import { metadataStore } from './lib/stores/metadata.svelte.js';
+  import { notificationService } from './lib/services/notificationService.js';
   import { srsStore } from './lib/stores/srs.svelte.js';
   import { vocabIndexStore } from './lib/stores/vocabIndex.svelte.js';
   import { ciIndexStore } from './lib/stores/ciIndex.svelte.js';
@@ -116,9 +117,48 @@
     return (counts.audio || 0) + (counts.visual || 0);
   });
 
+  // Handles URLs opened by notification clicks
+  function handleDeepLink(pathname = window.location.pathname) {
+    // 1. Session log deep-link: /log/{lang}/{date}
+    const logMatch = pathname.match(/^\/log\/([a-zA-Z0-9_-]+)\/(\d{4}-\d{2}-\d{2})$/);
+    if (logMatch) {
+      const [, langCode, targetDate] = logMatch;
+      if (metadataStore.languages[langCode]) {
+        metadataStore.activeLanguage = langCode;
+      }
+      activeLanguage.selectedDate = targetDate;
+      window.history.replaceState({}, '', '/');
+      return;
+    }
+
+    // 2. SRS review deep-link: /srs/{lang}
+    const srsMatch = pathname.match(/^\/srs\/([a-zA-Z0-9_-]+)$/);
+    if (srsMatch) {
+      const [, langCode] = srsMatch;
+      if (metadataStore.languages[langCode]) {
+        metadataStore.activeLanguage = langCode;
+      }
+      activeLanguage.activeTab = 'srs';
+      window.history.replaceState({}, '', '/');
+      return;
+    }
+  }
+
   onMount(() => {
     metadataStore.init();
 
+    handleDeepLink();
+    window.addEventListener('popstate', () => handleDeepLink());
+
+    // 1. Initialize Service Worker & Native Notification loop asynchronously
+    (async () => {
+      await notificationService.init();
+      if (notificationService.permission === 'granted') {
+        notificationService.startScheduler(19); // 7:00 PM default evening check
+      }
+    })();
+
+    // 2. Hash routing setup
     const initialHash = window.location.hash.replace('#', '');
     if (initialHash === 'day') {
       activeRoute = 'day';
@@ -152,6 +192,8 @@
     };
 
     window.addEventListener('popstate', onPopState);
+
+    // Teardown cleanup stays intact
     return () => window.removeEventListener('popstate', onPopState);
   });
 </script>

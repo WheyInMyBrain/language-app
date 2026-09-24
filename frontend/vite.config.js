@@ -8,8 +8,11 @@ export default defineConfig({
     svelte(),
     tailwindcss(),
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'logo-192.png'],
       manifest: {
         name: 'Language Vault',
         short_name: 'LangVault',
@@ -20,17 +23,34 @@ export default defineConfig({
         orientation: 'portrait',
         icons: [
           {
-            src: '/icon-192.png',
+            src: '/logo-192.png',
             sizes: '192x192',
             type: 'image/png'
           },
           {
-            src: '/icon-512.png',
+            src: '/logo-512.png',
             sizes: '512x512',
             type: 'image/png'
           }
         ]
       }
     })
-  ]
+  ],
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true
+      },
+      '/ws': {
+        target: 'ws://localhost:3000',
+        ws: true
+      },
+      '/audio': {
+        target: 'http://localhost:3000',
+        changeOrigin: true
+      }
+    }
+  }
 });

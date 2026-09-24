@@ -22,9 +22,8 @@ services:
       - "3000"
     volumes:
       - ./storage:/app/storage
-    environment:
-      - PORT=3000
-      - STORAGE_DIR=/app/storage
+    env_file:
+      - .env
 
   frontend:
     build:
@@ -37,4 +36,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
-  frontend_dist:                          
+  frontend_dist:

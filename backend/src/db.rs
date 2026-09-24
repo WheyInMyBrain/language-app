@@ -8,7 +8,20 @@ pub fn init_db(db_path: &Path) -> Connection {
          PRAGMA journal_mode = WAL;
          PRAGMA synchronous = NORMAL;
          PRAGMA busy_timeout = 5000;
-         PRAGMA mmap_size = 268435456;",
+         PRAGMA mmap_size = 268435456;
+
+         CREATE TABLE IF NOT EXISTS yjs_sync_rooms (
+             room_name TEXT PRIMARY KEY,
+             blob BLOB NOT NULL
+         );
+
+         CREATE TABLE IF NOT EXISTS push_subscriptions (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             endpoint TEXT NOT NULL UNIQUE,
+             p256dh TEXT NOT NULL,
+             auth TEXT NOT NULL,
+             created_at TEXT DEFAULT (datetime('now'))
+         );",
     )
     .expect("Failed to configure SQLite PRAGMAs");
     conn
@@ -27,4 +40,21 @@ pub fn save_blob_for_room(conn: &Connection, room_name: &str, blob: &[u8]) {
          ON CONFLICT(room_name) DO UPDATE SET blob = excluded.blob",
         params![room_name, blob],
     );
+}
+
+pub fn save_push_subscription(
+    conn: &Connection,
+    endpoint: &str,
+    p256dh: &str,
+    auth: &str,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO push_subscriptions (endpoint, p256dh, auth)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(endpoint) DO UPDATE SET
+            p256dh = excluded.p256dh,
+            auth = excluded.auth",
+        params![endpoint, p256dh, auth],
+    )?;
+    Ok(())
 }

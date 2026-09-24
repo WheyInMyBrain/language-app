@@ -11,6 +11,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
+use tracing::{debug, error, info, warn};
 use yrs::sync::{Message as SyncMessage, SyncMessage as YrsSync};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
@@ -41,14 +42,24 @@ async fn get_or_create_room(state: &Arc<AppState>, room_name: &str) -> Arc<Room>
         load_blob_for_room(&conn, &name_owned)
     })
     .await
-    .unwrap_or(None);
+    .unwrap_or_else(|e| {
+        error!(target: "ws", room = %room_name, error = %e, "Failed to join blocking task for room hydration");
+        None
+    });
 
     if let Some(blob) = blob_opt {
-        if let Ok(update) = Update::decode_v1(&blob) {
-            let mut txn = doc.transact_mut();
-            let _ = txn.apply_update(update);
-            println!("[ROOM HYDRATED] Loaded blob for '{}'", room_name);
+        match Update::decode_v1(&blob) {
+            Ok(update) => {
+                let mut txn = doc.transact_mut();
+                let _ = txn.apply_update(update);
+                info!(target: "ws", room = %room_name, bytes = blob.len(), "Room hydrated from SQLite snapshot");
+            }
+            Err(e) => {
+                error!(target: "ws", room = %room_name, error = %e, "Failed to decode stored Yjs blob");
+            }
         }
+    } else {
+        debug!(target: "ws", room = %room_name, "No prior snapshot found; initializing empty room");
     }
 
     let (bcast, _) = broadcast::channel::<Bytes>(1024);
@@ -70,6 +81,7 @@ pub async fn handle_ws_upgrade(
 }
 
 async fn handle_ws_connection(socket: WebSocket, room_name: String, state: Arc<AppState>) {
+    info!(target: "ws", room = %room_name, "Client connected via WebSocket");
     let room = get_or_create_room(&state, &room_name).await;
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
@@ -79,15 +91,20 @@ async fn handle_ws_connection(socket: WebSocket, room_name: String, state: Arc<A
         let txn = doc.transact();
         let sv = txn.state_vector();
         let step1 = SyncMessage::Sync(YrsSync::SyncStep1(sv)).encode_v1();
-        let _ = ws_sender.send(WsMessage::Binary(Bytes::from(step1))).await;
+        if let Err(e) = ws_sender.send(WsMessage::Binary(Bytes::from(step1))).await {
+            warn!(target: "ws", room = %room_name, error = %e, "Failed to send initial sync step 1");
+            return;
+        }
     }
 
     let mut sub = room.bcast.subscribe();
 
     // 2. Broadcast Task: Forward room updates from other peers
+    let room_name_send = room_name.clone();
     let mut send_task = tokio::spawn(async move {
         while let Ok(msg) = sub.recv().await {
-            if ws_sender.send(WsMessage::Binary(msg)).await.is_err() {
+            if let Err(e) = ws_sender.send(WsMessage::Binary(msg)).await {
+                debug!(target: "ws", room = %room_name_send, error = %e, "WebSocket sender stream terminated");
                 break;
             }
         }
@@ -96,63 +113,73 @@ async fn handle_ws_connection(socket: WebSocket, room_name: String, state: Arc<A
     // 3. Receive Task: Handle incoming binary messages from this client
     let state_clone = state.clone();
     let room_clone = room.clone();
-    let room_name_clone = room_name.clone();
+    let room_name_recv = room_name.clone();
 
     let mut recv_task = tokio::spawn(async move {
-        while let Some(Ok(msg)) = ws_receiver.next().await {
-            if let WsMessage::Binary(data) = msg {
-                if let Ok(sync_msg) = SyncMessage::decode_v1(&data) {
-                    match sync_msg {
-                        // Client sent StateVector (Step 1) -> Reply with diff (Step 2)
-                        SyncMessage::Sync(YrsSync::SyncStep1(sv)) => {
-                            let doc = room_clone.doc.read().await;
-                            let txn = doc.transact();
-                            let update = txn.encode_diff_v1(&sv);
-                            let step2 = SyncMessage::Sync(YrsSync::SyncStep2(update)).encode_v1();
-                            let _ = room_clone.bcast.send(Bytes::from(step2));
-                        }
-
-                        // Client sent mutations (Step 2 or incremental Update)
-                        SyncMessage::Sync(YrsSync::SyncStep2(update_data))
-                        | SyncMessage::Sync(YrsSync::Update(update_data)) => {
-                            if let Ok(update) = Update::decode_v1(&update_data) {
-                                {
-                                    let doc = room_clone.doc.write().await;
-                                    let mut txn = doc.transact_mut();
-                                    let _ = txn.apply_update(update);
-                                }
-
-                                // Broadcast to other peers using zero-copy Bytes
-                                let update_msg =
-                                    SyncMessage::Sync(YrsSync::Update(update_data)).encode_v1();
-                                let _ = room_clone.bcast.send(Bytes::from(update_msg));
-
-                                // Encode full document state vector diff
-                                let current_blob = {
-                                    let doc = room_clone.doc.read().await;
-                                    let txn = doc.transact();
-                                    txn.encode_diff_v1(&StateVector::default())
-                                };
-
-                                // Offload SQLite persistence to a blocking thread
-                                let st = state_clone.clone();
-                                let rn = room_name_clone.clone();
-                                tokio::task::spawn_blocking(move || {
-                                    let conn = st.db_conn.lock().unwrap();
-                                    save_blob_for_room(&conn, &rn, &current_blob);
-                                });
+        while let Some(msg_res) = ws_receiver.next().await {
+            match msg_res {
+                Ok(WsMessage::Binary(data)) => {
+                    match SyncMessage::decode_v1(&data) {
+                        Ok(sync_msg) => match sync_msg {
+                            SyncMessage::Sync(YrsSync::SyncStep1(sv)) => {
+                                let doc = room_clone.doc.read().await;
+                                let txn = doc.transact();
+                                let update = txn.encode_diff_v1(&sv);
+                                let step2 = SyncMessage::Sync(YrsSync::SyncStep2(update)).encode_v1();
+                                let _ = room_clone.bcast.send(Bytes::from(step2));
                             }
-                        }
 
-                        // Awareness (presence/cursors)
-                        SyncMessage::Awareness(awareness_update) => {
-                            let echo_msg = SyncMessage::Awareness(awareness_update).encode_v1();
-                            let _ = room_clone.bcast.send(Bytes::from(echo_msg));
-                        }
+                            SyncMessage::Sync(YrsSync::SyncStep2(update_data))
+                            | SyncMessage::Sync(YrsSync::Update(update_data)) => {
+                                match Update::decode_v1(&update_data) {
+                                    Ok(update) => {
+                                        {
+                                            let doc = room_clone.doc.write().await;
+                                            let mut txn = doc.transact_mut();
+                                            let _ = txn.apply_update(update);
+                                        }
 
-                        _ => {}
+                                        let update_msg =
+                                            SyncMessage::Sync(YrsSync::Update(update_data)).encode_v1();
+                                        let _ = room_clone.bcast.send(Bytes::from(update_msg));
+
+                                        let current_blob = {
+                                            let doc = room_clone.doc.read().await;
+                                            let txn = doc.transact();
+                                            txn.encode_diff_v1(&StateVector::default())
+                                        };
+
+                                        let st = state_clone.clone();
+                                        let rn = room_name_recv.clone();
+                                        tokio::task::spawn_blocking(move || {
+                                            let conn = st.db_conn.lock().unwrap();
+                                            save_blob_for_room(&conn, &rn, &current_blob);
+                                        });
+                                    }
+                                    Err(e) => {
+                                        warn!(target: "ws", room = %room_name_recv, error = %e, "Failed to decode update payload");
+                                    }
+                                }
+                            }
+
+                            SyncMessage::Awareness(awareness_update) => {
+                                let echo_msg = SyncMessage::Awareness(awareness_update).encode_v1();
+                                let _ = room_clone.bcast.send(Bytes::from(echo_msg));
+                            }
+
+                            _ => {}
+                        },
+                        Err(e) => {
+                            warn!(target: "ws", room = %room_name_recv, error = %e, "Failed to decode Yjs sync message");
+                        }
                     }
                 }
+                Ok(WsMessage::Close(_)) => break,
+                Err(e) => {
+                    debug!(target: "ws", room = %room_name_recv, error = %e, "WebSocket receiver encountered error/disconnect");
+                    break;
+                }
+                _ => {}
             }
         }
     });
@@ -162,7 +189,7 @@ async fn handle_ws_connection(socket: WebSocket, room_name: String, state: Arc<A
         _ = (&mut recv_task) => send_task.abort(),
     };
 
-    println!("[WS DISCONNECTED] Room: {}", room_name);
+    info!(target: "ws", room = %room_name, "Client disconnected from WebSocket");
 
     // Evict room from RAM if no active WebSocket clients remain
     if room.bcast.receiver_count() == 0 {
@@ -170,7 +197,7 @@ async fn handle_ws_connection(socket: WebSocket, room_name: String, state: Arc<A
         if let Some(r) = rooms.get(&room_name) {
             if r.bcast.receiver_count() == 0 {
                 rooms.remove(&room_name);
-                println!("[ROOM EVICTED FROM RAM] '{}'", room_name);
+                info!(target: "ws", room = %room_name, "Zero active connections; evicted room document from memory");
             }
         }
     }

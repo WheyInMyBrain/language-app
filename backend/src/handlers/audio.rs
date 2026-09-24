@@ -7,6 +7,7 @@ use axum::{
 };
 use std::sync::Arc;
 use tokio::{fs, io::AsyncWriteExt};
+use tracing::{error, info, warn};
 
 pub async fn handle_ping(State(state): State<Arc<AppState>>) -> Response {
     let now = std::time::SystemTime::now()
@@ -16,6 +17,13 @@ pub async fn handle_ping(State(state): State<Arc<AppState>>) -> Response {
 
     let storage_ready = fs::metadata(&state.audio_root).await.is_ok();
     let db_ready = state.db_path.exists();
+
+    if !storage_ready {
+        warn!(target: "audio", path = ?state.audio_root, "Audio storage path not accessible");
+    }
+    if !db_ready {
+        warn!(target: "audio", path = ?state.db_path, "Database path does not exist");
+    }
 
     (
         StatusCode::OK,
@@ -47,7 +55,12 @@ pub async fn handle_audio_upload(
         .join(&safe_category);
 
     if let Err(e) = fs::create_dir_all(&target_dir).await {
-        eprintln!("[AUDIO ERROR] Failed to create directories: {:?}", e);
+        error!(
+            target: "audio",
+            dir = ?target_dir,
+            error = %e,
+            "Failed to create target audio directories"
+        );
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(UploadResponse {
@@ -65,7 +78,12 @@ pub async fn handle_audio_upload(
     let mut file = match fs::File::create(&file_path).await {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("[AUDIO ERROR] Failed to create file: {:?}", e);
+            error!(
+                target: "audio",
+                path = ?file_path,
+                error = %e,
+                "Failed to create destination audio file"
+            );
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(UploadResponse {
@@ -79,7 +97,12 @@ pub async fn handle_audio_upload(
     };
 
     if let Err(e) = file.write_all(&body).await {
-        eprintln!("[AUDIO ERROR] Failed to write file body: {:?}", e);
+        error!(
+            target: "audio",
+            path = ?file_path,
+            error = %e,
+            "Failed to write audio payload to disk"
+        );
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(UploadResponse {
@@ -92,7 +115,12 @@ pub async fn handle_audio_upload(
     }
 
     let relative_path = format!("{}/{}/{}/{}", safe_lang, safe_date, safe_category, safe_filename);
-    println!("[AUDIO SAVED] {} ({} bytes)", relative_path, bytes_len);
+    info!(
+        target: "audio",
+        path = %relative_path,
+        bytes = bytes_len,
+        "Audio file saved successfully"
+    );
 
     (
         StatusCode::CREATED,
