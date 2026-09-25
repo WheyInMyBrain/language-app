@@ -145,19 +145,29 @@
     };
 
     doc.on('afterTransaction', batchedSync);
-    idbProvider.on('synced', handleSynced);
+    if (idbProvider && typeof idbProvider.on === 'function') {
+      idbProvider.on('synced', handleSynced);
+    }
 
     const handleWsSync = (isSynced) => {
       if (isSynced) handleSynced();
     };
-    wsProvider.on('sync', handleWsSync);
 
-    if (idbProvider.synced) handleSynced();
+    // 🌟 SAFE GUARD: wsProvider may be null or undefined
+    if (wsProvider && typeof wsProvider.on === 'function') {
+      wsProvider.on('sync', handleWsSync);
+    }
+
+    if (idbProvider?.synced) handleSynced();
 
     return () => {
       doc.off('afterTransaction', batchedSync);
-      idbProvider.off('synced', handleSynced);
-      wsProvider.off('sync', handleWsSync);
+      if (idbProvider && typeof idbProvider.off === 'function') {
+        idbProvider.off('synced', handleSynced);
+      }
+      if (wsProvider && typeof wsProvider.off === 'function') {
+        wsProvider.off('sync', handleWsSync);
+      }
       if (dayHandle) {
         dayHandle.destroy();
         dayHandle = null;

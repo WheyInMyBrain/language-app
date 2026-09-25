@@ -6,16 +6,17 @@
   import WordMixerQuiz from '../components/WordMixerQuiz.svelte';
   import VisualQuiz from '../components/VisualQuiz.svelte';
   import HearingQuiz from '../components/HearingQuiz.svelte';
+  import WritingQuiz from '../components/WritingQuiz.svelte'; 
 
   // Razor-sharp vector icons
   import { 
     Zap, 
     Sparkles, 
     Target, 
-    Layers, 
     Dice5, 
     Eye, 
     Headphones,
+    PenTool,
     BookOpen
   } from '@lucide/svelte';
 
@@ -30,6 +31,7 @@
   let themeColor = $derived(activeLanguage.themeColor || colors.theme || '#a855f7');
   let vocabColor = $derived(colors.vocab?.primary || colors.vocab?.dark_primary || '#10b981');
   let listeningColor = $derived(colors.listening?.primary || colors.listening?.dark_primary || '#f97316');
+  let writingColor = $derived(colors.speaking?.primary || colors.speaking?.dark_primary || '#c026d3');
 
   let visualDue = $derived(srsStore.getVisualDueCount ? srsStore.getVisualDueCount(todayStr) : 0);
   let audioDue = $derived(srsStore.getAudioDueCount ? srsStore.getAudioDueCount(todayStr) : 0);
@@ -46,7 +48,6 @@
   <header 
     class="relative flex items-center justify-between p-4 sm:p-5 rounded-3xl border border-black/10 dark:border-white/15 bg-white/70 dark:bg-[#12131a]/75 backdrop-blur-2xl backdrop-saturate-[180%] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.18),inset_0_1px_1px_rgba(255,255,255,0.45)] dark:shadow-[0_24px_50px_-12px_rgba(0,0,0,0.7),inset_0_1px_1px_rgba(255,255,255,0.15)] overflow-hidden flex-wrap gap-3"
   >
-    <!-- Top Specular Neon Highlight Lip -->
     <div 
       class="pointer-events-none absolute top-0 left-0 right-0 h-[2px] opacity-90 z-20"
       style="background: linear-gradient(90deg, transparent 5%, var(--quiz-theme) 30%, color-mix(in srgb, var(--quiz-theme) 60%, white) 70%, transparent 95%); box-shadow: 0 1px 12px var(--quiz-theme);"
@@ -104,17 +105,6 @@
 
   <!-- 🌟 STAGE 1: CREATIVE SENTENCE FORGE (Mixer) 🌟 -->
   <section class="space-y-4 relative">
-    <!-- Lateral Flank Bleed (Left and Right) -->
-    <div 
-      class="pointer-events-none absolute -left-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
-      style="background: radial-gradient(circle at 0% 50%, var(--quiz-theme), transparent 75%);"
-    ></div>
-    <div 
-      class="pointer-events-none absolute -right-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
-      style="background: radial-gradient(circle at 100% 50%, var(--quiz-theme), transparent 75%);"
-    ></div>
-
-    <!-- Section Bridge -->
     <div class="flex items-center gap-3">
       <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
       <div 
@@ -134,17 +124,6 @@
 
   <!-- 🌟 STAGE 2: VISUAL RECALL STUDIO 🌟 -->
   <section class="space-y-4 relative">
-    <!-- Lateral Flank Bleed -->
-    <div 
-      class="pointer-events-none absolute -left-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
-      style="background: radial-gradient(circle at 0% 50%, {vocabColor}, transparent 75%);"
-    ></div>
-    <div 
-      class="pointer-events-none absolute -right-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
-      style="background: radial-gradient(circle at 100% 50%, {vocabColor}, transparent 75%);"
-    ></div>
-
-    <!-- Section Bridge -->
     <div class="flex items-center gap-3">
       <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
       <div 
@@ -172,17 +151,6 @@
 
   <!-- 🌟 STAGE 3: TONE EAR TRAINER 🌟 -->
   <section class="space-y-4 relative">
-    <!-- Lateral Flank Bleed -->
-    <div 
-      class="pointer-events-none absolute -left-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
-      style="background: radial-gradient(circle at 0% 50%, {listeningColor}, transparent 75%);"
-    ></div>
-    <div 
-      class="pointer-events-none absolute -right-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
-      style="background: radial-gradient(circle at 100% 50%, {listeningColor}, transparent 75%);"
-    ></div>
-
-    <!-- Section Bridge -->
     <div class="flex items-center gap-3">
       <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
       <div 
@@ -206,6 +174,25 @@
     </div>
 
     <HearingQuiz {langCode} />
+  </section>
+
+  <!-- 🌟 STAGE 4: MOTOR RECALL & CALLIGRAPHY (Writing Quiz) 🌟 -->
+  <section class="space-y-4 relative">
+    <div class="flex items-center gap-3">
+      <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
+      <div 
+        class="flex items-center gap-2 px-3.5 py-1 rounded-full bg-[var(--bg-surface)] border shadow-xs"
+        style="border-color: color-mix(in srgb, {writingColor} 35%, var(--border-subtle));"
+      >
+        <PenTool size={12} style="color: {writingColor};" />
+        <span class="text-[10px] font-mono font-bold uppercase tracking-widest text-[var(--text-primary)]">
+          Stage 04 • Motor & Calligraphy Recall
+        </span>
+      </div>
+      <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
+    </div>
+
+    <WritingQuiz {langCode} />
   </section>
 
 </div>

@@ -16,7 +16,8 @@
     BookOpen, 
     MessageSquare,
     Calendar,
-    Eye
+    Eye,
+    PenTool
   } from '@lucide/svelte';
 
   let { onSelectDate } = $props();
@@ -50,24 +51,32 @@
   let ciDone = $derived(todayLog?.ci || 0);
   let grammarDone = $derived(todayLog?.grammar || 0);
 
-  // Dual SRS Deck Counters
+  // 🌟 Tri-Deck SRS Counters (Vision, Listen, Write) 🌟
   let srsCounts = $derived.by(() => {
     const raw = srsStore.cards || {};
     let visualDue = 0;
     let audioDue = 0;
+    let writingDue = 0;
 
     for (const item of Object.values(raw)) {
       if (!item) continue;
       const isDue = !item.due_date || item.due_date <= todayStr;
       if (isDue) {
-        if (item.card_type === 'listening') {
+        if (item.card_type === 'listening' || item.card_type === 'audio') {
           audioDue++;
+        } else if (item.card_type === 'writing') {
+          writingDue++;
         } else {
           visualDue++;
         }
       }
     }
-    return { visualDue, audioDue, totalDue: visualDue + audioDue };
+    return { 
+      visualDue, 
+      audioDue, 
+      writingDue, 
+      totalDue: visualDue + audioDue + writingDue 
+    };
   });
 
   // Interactive Hover State
@@ -175,7 +184,6 @@
       const rev = Number(entry.revision ?? 0);
       const dueDate = entry.due_date;
 
-      // 1. Initial Pass 0 reviews
       if (rev < 1) {
         if (entry.date < todayStr) {
           const diffDays = Math.max(
@@ -203,7 +211,6 @@
         continue;
       }
 
-      // 2. Regular SRS schedule
       if (dueDate) {
         if (dueDate < todayStr) {
           const diffDays = Math.max(
@@ -247,6 +254,7 @@
   let overdueCount = $derived(scheduledActionItems.filter((i) => i.urgencyCategory === 'overdue').length);
   let flashcardColor = $derived(colors.flashcard?.primary || colors.flashcard?.dark_primary || '#f43f5e');
   let audioColor = $derived(colors.listening?.primary || colors.listening?.dark_primary || '#f97316');
+  let writingColor = $derived(colors.speaking?.primary || colors.speaking?.dark_primary || '#c026d3');
   let vocabColor = $derived(colors.vocab?.primary || colors.vocab?.dark_primary || '#10b981');
 
   function getUrgencyStyles(item) {
@@ -440,7 +448,7 @@
       </div>
     </div>
 
-    <!-- Right Side: Habit Tracks (Localized Bleed Around Hovered Track) -->
+    <!-- Right Side: Habit Tracks -->
     <div class="flex-1 w-full min-w-0 flex flex-col gap-2 sm:gap-2.5 box-border">
       {#each concentricRings as ring (ring.id)}
         {@const pct = getPct(ring.current, ring.target)}
@@ -448,7 +456,6 @@
         {@const isHovered = hoveredRingId === ring.id}
 
         <div class="relative w-full">
-          <!-- Uncropped ambient bleed aura centered on hovered row -->
           <div 
             class="pointer-events-none absolute -inset-x-6 -inset-y-4 rounded-3xl blur-2xl opacity-0 transition-opacity duration-300 -z-10"
             style="
@@ -510,7 +517,7 @@
 
   </div>
 
-  <!-- DUAL SRS REVIEW QUEUE BANNER -->
+  <!-- 🌟 TRI-DECK SRS REVIEW QUEUE BANNER (Vision, Listen, Write) 🌟 -->
   <div class="relative flex items-center justify-between p-3.5 sm:p-4 rounded-2xl border border-[var(--border-card)] bg-[var(--bg-surface-elevated)]/60 shadow-xs backdrop-blur-xs overflow-hidden group box-border">
     
     <div 
@@ -535,14 +542,11 @@
         <span class="text-xs font-bold text-[var(--text-primary)] block truncate">
           SRS Queue Status
         </span>
-        <span class="text-[10px] font-mono text-[var(--text-muted)] block truncate">
-          Scheduled recognition and ear training
-        </span>
       </div>
     </div>
 
-    <!-- Dual Due Metrics -->
-    <div class="flex items-center gap-2 sm:gap-3 shrink-0 ml-2">
+    <!-- Tri-Deck Due Metrics -->
+    <div class="flex items-center gap-2 sm:gap-2.5 shrink-0 ml-2">
       {#if srsCounts.totalDue === 0}
         <div 
           class="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-full border text-[10px] font-mono font-bold uppercase tracking-wider shadow-xs"
@@ -557,7 +561,7 @@
           <span>Queue Clear</span>
         </div>
       {:else}
-        <!-- Visual SRS Count -->
+        <!-- 1. Vision SRS Count (Formerly 'vis') -->
         <div 
           class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl border shadow-2xs"
           style="
@@ -570,33 +574,51 @@
           <span class="text-xs sm:text-sm font-mono font-black" style="color: {flashcardColor};">
             {srsCounts.visualDue}
           </span>
-          <span class="text-[9px] font-mono font-bold uppercase text-[var(--text-muted)] hidden sm:inline">
-            vis
+          <span class="text-[9px] font-mono font-bold lowercase text-[var(--text-muted)] hidden sm:inline">
+            vision
           </span>
         </div>
 
-        <!-- Audio SRS Count -->
+        <!-- 2. Listen SRS Count (Formerly 'ear') -->
         <div 
           class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl border shadow-2xs"
           style="
             background-color: color-mix(in srgb, {audioColor} 12%, transparent);
             border-color: color-mix(in srgb, {audioColor} 30%, transparent);
           "
-          title="Tone Hearing Audio Due"
+          title="Listening / Ear Training Due"
         >
           <Headphones size={12} style="color: {audioColor};" />
           <span class="text-xs sm:text-sm font-mono font-black" style="color: {audioColor};">
             {srsCounts.audioDue}
           </span>
-          <span class="text-[9px] font-mono font-bold uppercase text-[var(--text-muted)] hidden sm:inline">
-            ear
+          <span class="text-[9px] font-mono font-bold lowercase text-[var(--text-muted)] hidden sm:inline">
+            listen
+          </span>
+        </div>
+
+        <!-- 3. Write SRS Count -->
+        <div 
+          class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl border shadow-2xs"
+          style="
+            background-color: color-mix(in srgb, {writingColor} 12%, transparent);
+            border-color: color-mix(in srgb, {writingColor} 30%, transparent);
+          "
+          title="Motor & Stroke Calligraphy Due"
+        >
+          <PenTool size={12} style="color: {writingColor};" />
+          <span class="text-xs sm:text-sm font-mono font-black" style="color: {writingColor};">
+            {srsCounts.writingDue}
+          </span>
+          <span class="text-[9px] font-mono font-bold lowercase text-[var(--text-muted)] hidden sm:inline">
+            write
           </span>
         </div>
       {/if}
     </div>
   </div>
 
-  <!-- MONOSPACE SCHEDULED QUEUE (Natural Edge Bleeds) -->
+  <!-- MONOSPACE SCHEDULED QUEUE -->
   <div class="pt-2 border-t border-[var(--border-subtle)] space-y-2 box-border relative">
     <div class="flex items-center justify-between px-1 mb-1">
       <span class="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
@@ -610,7 +632,6 @@
     <!-- Initialize Today Action Card -->
     {#if !hasTodayLog}
       <div class="relative w-full">
-        <!-- Natural uncropped halo for Start action -->
         <div 
           class="pointer-events-none absolute -inset-x-4 -inset-y-2 rounded-2xl blur-xl opacity-30 -z-10"
           style="background: radial-gradient(ellipse at center, rgba(245, 158, 11, 0.4) 0%, transparent 75%);"
@@ -633,9 +654,6 @@
               <span class="font-mono text-xs sm:text-sm font-bold text-[var(--text-primary)] group-hover:text-amber-400 transition-colors">
                 {todayStr}
               </span>
-              <span class="text-[11px] text-[var(--text-muted)] truncate hidden sm:inline">
-                Initialize today's session
-              </span>
             </div>
           </div>
 
@@ -651,7 +669,6 @@
     {#each scheduledActionItems as item (item.date)}
       {@const styles = getUrgencyStyles(item)}
       <div class="relative w-full">
-        <!-- Natural uncropped halo bleeding around queue cards -->
         <div 
           class="pointer-events-none absolute -inset-x-4 -inset-y-2 rounded-2xl blur-xl opacity-35 transition-opacity duration-200 -z-10"
           style="background: radial-gradient(ellipse at center, {styles.pillText} 0%, transparent 75%);"
@@ -690,9 +707,18 @@
           </div>
 
           <div class="flex items-center gap-2 shrink-0 ml-2">
-            <span class="w-[60px] sm:w-[68px] text-center text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] shadow-2xs">
-              REV {item.revision}
-            </span>
+            <div 
+              class="flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-xl font-mono text-[10px] tracking-tight border border-black/25 dark:border-white/[0.08] bg-black/[0.06] dark:bg-black/50 shadow-[inset_0_2px_4px_rgba(0,0,0,0.4),0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-sm"
+            >
+              <span class="text-[9px] font-extrabold text-[var(--text-muted)] opacity-60 tracking-widest uppercase">
+                revision
+              </span>
+              <span class="w-[1px] h-2.5 bg-black/20 dark:bg-white/10"></span>
+              <span class="font-black text-xs text-[var(--text-primary)] tabular-nums">
+                {String(item.revision).padStart(2, '0')}
+              </span>
+            </div>
+
             <ArrowRight size={13} class="text-[var(--text-muted)] group-hover:text-[var(--text-primary)] group-hover:translate-x-1 transition-transform" />
           </div>
         </button>

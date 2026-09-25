@@ -53,7 +53,7 @@ export async function addWordToDay({ langCode, dateStr, dayDocHandle, wordData }
     }
   }
 
-  // 3. Mutate SRS Room ({lang}:srs) -> 'visual' and 'listening'
+  // 3. Mutate SRS Room ({lang}:srs) -> 'visual', 'listening', and 'writing'
   const srsHandle = getDocHandle(`${langCode}:srs`);
   if (srsHandle?.doc) {
     const queueMap = srsHandle.doc.getMap('queue');
@@ -76,6 +76,11 @@ export async function addWordToDay({ langCode, dateStr, dayDocHandle, wordData }
     queueMap.set(`${dateStr}:w${wordId}:listening`, {
       ...cardPayload,
       card_type: 'listening'
+    });
+
+    queueMap.set(`${dateStr}:w${wordId}:writing`, {
+      ...cardPayload,
+      card_type: 'writing'
     });
   }
 
@@ -144,7 +149,7 @@ export async function updateWordInDay({ langCode, dateStr, dayDocHandle, wordInd
   const srsHandle = getDocHandle(`${langCode}:srs`);
   if (srsHandle?.doc) {
     const queueMap = srsHandle.doc.getMap('queue');
-    ['visual', 'listening'].forEach((type) => {
+    ['visual', 'listening', 'writing'].forEach((type) => {
       const cardKey = `${dateStr}:w${wordId}:${type}`;
       const prevCard = queueMap.get(cardKey);
       if (prevCard) {

@@ -1,3 +1,4 @@
+// backend/src/main.rs
 mod backup;
 mod db;
 mod handlers;
@@ -24,7 +25,7 @@ use tower_http::services::ServeDir;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use handlers::{audio, ws};
+use handlers::{audio, glyph, ws};
 use state::AppState;
 
 #[tokio::main]
@@ -45,12 +46,16 @@ async fn main() {
     let storage_root = PathBuf::from(storage_dir);
 
     let db_dir = storage_root.join("database");
+    let lexicons_dir = db_dir.join("lexicons");
     let audio_root = storage_root.join("audio");
     let backups_dir = storage_root.join("backups");
 
     fs::create_dir_all(&db_dir)
         .await
         .expect("Failed to initialize storage/database directory");
+    fs::create_dir_all(&lexicons_dir)
+        .await
+        .expect("Failed to initialize storage/database/lexicons directory");
     fs::create_dir_all(&audio_root)
         .await
         .expect("Failed to initialize storage/audio directory");
@@ -61,14 +66,16 @@ async fn main() {
     let live_db_path = db_dir.join("language_database.db");
     let conn = db::init_db(&live_db_path);
 
+    // 🌟 AppState with lazy, dynamic lexicon connection pool 🌟
     let state = Arc::new(AppState {
         audio_root: audio_root.clone(),
         db_path: live_db_path.clone(),
         rooms: tokio::sync::RwLock::new(HashMap::new()),
         db_conn: Mutex::new(conn),
+        lexicon_conns: Mutex::new(HashMap::new()),
     });
 
-    // 3. Background Notification Scheduler (Checks for due SRS cards and streak nudges)
+    // 3. Background Notification Scheduler
     notifications::scheduler::start_notification_worker(state.clone());
 
     // 4. Background Nightly Backup Scheduler (03:00 AM Local Time)
@@ -169,7 +176,7 @@ async fn main() {
         .route("/ping", get(audio::handle_ping))
         .route("/api/ping", get(audio::handle_ping))
         .route("/api/backup/now", post(move || trigger_backup()))
-        .route("/ws/{room_name}", get(ws::handle_ws_upgrade))
+        .route("/ws", get(ws::handle_ws_upgrade))
         .route(
             "/api/notifications/vapid-key",
             get(notifications::get_vapid_public_key),
@@ -186,6 +193,7 @@ async fn main() {
             "/api/audio/{lang}/{date}/{category}/{index}",
             post(audio::handle_audio_upload),
         )
+        .route("/api/glyph/{lang}/{char}", get(glyph::handle_glyph_lookup))
         .nest_service("/audio", ServeDir::new(&audio_root))
         .layer(cors)
         .with_state(state);
@@ -200,6 +208,7 @@ async fn main() {
 
     info!(target: "server", bind = %bind_addr, "Language App Server running");
     info!(target: "server", live_db = ?live_db_path, "SQLite live storage mounted");
+    info!(target: "server", lexicons_dir = ?lexicons_dir, "Lexicons storage active");
     info!(target: "server", audio_root = ?audio_root, "Audio storage mounted");
     info!(target: "server", backups_dir = ?backups_dir, "Backups directory active");
 

@@ -1,33 +1,26 @@
 <!-- frontend/src/components/OmniCard.svelte -->
 <script>
-  import { onDestroy } from 'svelte';
   import { activeLanguage } from '../lib/stores/activeLanguage.svelte.js';
   import { tokenizePhonetics } from '../lib/formatters/phonetics.js';
   import { formatSecondsToTimer } from '../lib/mediaResolver.js';
   import { playTTS } from '../lib/tts.js';
-  import { getDocHandle, createSyncedDoc } from '../lib/yjs.js';
-  import { resolveAudioSource, saveAudioRecord } from '../lib/audioSync.js';
-  import { metadataStore } from '../lib/stores/metadata.svelte.js';
 
   // Subcomponents
   import ColoredText from './ColoredText.svelte';
   import VideoPlayer from './VideoPlayer.svelte';
+  import AudioBar from './AudioBar.svelte';
 
   // Razor-sharp vector icons
   import { 
     Volume2, 
     Play, 
-    Pause, 
-    Square, 
     Headphones, 
     BookOpen, 
     MessageSquare, 
     ChevronDown, 
     Mic, 
-    CloudUpload, 
     Sparkles,
-    ImageOff,
-    Loader2
+    ImageOff
   } from '@lucide/svelte';
 
   // 🌟 EXACT SYNCHRONIZED TONE CHROMA ENGINE FROM VOCABSEARCHSTREAM 🌟
@@ -73,20 +66,34 @@
 
   let isCopied = $state(false);
   let isSpeaking = $state(false);
+  let audioDuration = $state(item.audio_duration || 0);
 
-  // 🌟 MEDIA RESOLUTION & LOADING STATES 🌟
-  let isMediaLoading = $state(true);
+  // 🌟 ROBUST MEDIA LOADING STATE 🌟
+  // Only track changes to the link string itself, avoiding re-triggers on audio duration changes
+  let lastLink = $state(null);
+  let isMediaLoading = $state(false);
   let hasMediaError = $state(false);
 
-  // Reset loading state when the link changes
   $effect(() => {
-    if (item.link) {
-      isMediaLoading = true;
-      hasMediaError = false;
-    } else {
-      isMediaLoading = false;
+    const currentLink = item.link || null;
+    if (currentLink !== lastLink) {
+      lastLink = currentLink;
+      if (currentLink) {
+        isMediaLoading = true;
+        hasMediaError = false;
+      } else {
+        isMediaLoading = false;
+        hasMediaError = false;
+      }
     }
   });
+
+  // Action to instantly resolve cached images
+  function initImage(node) {
+    if (node.complete && node.naturalWidth > 0) {
+      isMediaLoading = false;
+    }
+  }
 
   // 3D Gyroscopic Tilt States
   let cardEl = $state(null);
@@ -96,34 +103,6 @@
   let glareY = $state(50);
   let isHovered = $state(false);
   let tiltTicking = false;
-
-  // Audio Recording & Playback State
-  let isRecording = $state(false);
-  let isPlaying = $state(false);
-  let isPendingSync = $state(false);
-  let isLoadingAudio = $state(false);
-  let elapsedSec = $state(0);
-  let playbackProgress = $state(0);
-  let currentTimeDisplay = $state('0:00');
-  
-  let recordedDuration = $state(null);
-  let currentAudioDuration = $derived(recordedDuration ?? (item.audio_duration || 0));
-
-  let resolvedUrl = $state(null);
-  let audioEl = $state(null);
-  let timerInterval = null;
-  let playbackInterval = null;
-  let mediaRecorder = null;
-  let recordedChunks = [];
-
-  onDestroy(() => {
-    if (timerInterval) clearInterval(timerInterval);
-    if (playbackInterval) clearInterval(playbackInterval);
-    if (audioEl) audioEl.pause();
-    if (resolvedUrl && resolvedUrl.startsWith('blob:')) {
-      URL.revokeObjectURL(resolvedUrl);
-    }
-  });
 
   let langConfig = $derived(activeLanguage.current);
   let colors = $derived(activeLanguage.colors || {});
@@ -135,34 +114,38 @@
         return {
           label: 'Vocab',
           icon: MessageSquare,
-          color: colors.vocab?.primary || colors.vocab?.dark_primary || themeColor || '#10b981',
+          color: colors.vocab?.dark_primary || colors.vocab?.primary || themeColor || '#10b981',
           colorSub: colors.vocab?.light_primary || '#34d399',
-          audioCategory: 'vocab'
+          audioCategory: 'vocab',
+          prompt: 'Practice pronunciation'
         };
       case 'ci':
         return {
           label: 'CI Video',
           icon: Play,
-          color: colors.ci?.primary || colors.ci?.dark_primary || themeColor || '#a855f7',
+          color: colors.ci?.dark_primary || colors.ci?.primary || themeColor || '#a855f7',
           colorSub: colors.ci?.light_primary || '#c084fc',
-          audioCategory: 'ci'
+          audioCategory: 'ci',
+          prompt: 'Practice shadowing'
         };
       case 'listening':
         return {
           label: 'Listening',
           icon: Headphones,
-          color: colors.listening?.primary || colors.listening?.dark_primary || themeColor || '#f97316',
+          color: colors.listening?.dark_primary || colors.listening?.primary || themeColor || '#f97316',
           colorSub: colors.listening?.light_primary || '#fb923c',
-          audioCategory: 'listening'
+          audioCategory: 'listening',
+          prompt: 'Summarise video'
         };
       case 'grammar':
       default:
         return {
           label: 'Grammar',
           icon: BookOpen,
-          color: colors.grammar?.primary || colors.grammar?.dark_primary || themeColor || '#0ea5e9',
+          color: colors.grammar?.dark_primary || colors.grammar?.primary || themeColor || '#0ea5e9',
           colorSub: colors.grammar?.light_primary || '#38bdf8',
-          audioCategory: 'grammar'
+          audioCategory: 'grammar',
+          prompt: 'Record audio'
         };
     }
   });
@@ -178,7 +161,6 @@
     type === 'vocab' ? item.link : (youtubeThumbnail || null)
   );
 
-  // Synchronized primary & secondary tokens
   let vocabTokens = $derived(
     type === 'vocab'
       ? getSynchronizedTokens(item.native_script, item.pronunciation, langConfig)
@@ -195,143 +177,6 @@
 
   let duration = $derived(item.link_duration || item.durationSec || 0);
   let displayTimer = $derived(duration > 0 ? formatSecondsToTimer(duration) : null);
-
-  function formatTime(s) {
-    const mins = Math.floor(s / 60);
-    const secs = Math.floor(s % 60);
-    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-  }
-
-  function persistDurationLocally(seconds) {
-    const roomName = `${lang}:${date}`;
-    const handle = getDocHandle(roomName) || createSyncedDoc(roomName);
-    if (!handle?.doc) return;
-
-    if (type === 'vocab') {
-      const wordsArr = handle.doc.getArray('words');
-      const list = wordsArr.toArray().flat();
-      const targetIdx = list.findIndex((w) => Number(w.word_index ?? w.id) === Number(index));
-
-      if (targetIdx !== -1) {
-        handle.doc.transact(() => {
-          const updated = { ...list[targetIdx], audio_duration: seconds };
-          wordsArr.delete(targetIdx, 1);
-          wordsArr.insert(targetIdx, [updated]);
-        });
-      }
-    } else {
-      const actsArr = handle.doc.getArray('activities');
-      const list = actsArr.toArray().flat();
-      const targetIdx = list.findIndex(
-        (a) => a.activity_type === type && Number(a.item_index) === Number(index)
-      );
-
-      if (targetIdx !== -1) {
-        handle.doc.transact(() => {
-          const updated = { ...list[targetIdx], audio_duration: seconds };
-          actsArr.delete(targetIdx, 1);
-          actsArr.insert(targetIdx, [updated]);
-        });
-      }
-    }
-
-    metadataStore.refreshDayTotals(lang, date);
-  }
-
-  async function toggleRecord() {
-    if (isRecording) {
-      if (timerInterval) clearInterval(timerInterval);
-      mediaRecorder?.stop();
-      isRecording = false;
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      recordedChunks = [];
-      mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) recordedChunks.push(e.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-        const finalDuration = elapsedSec || 1;
-
-        if (resolvedUrl && resolvedUrl.startsWith('blob:')) {
-          URL.revokeObjectURL(resolvedUrl);
-        }
-
-        resolvedUrl = URL.createObjectURL(blob);
-        recordedDuration = finalDuration;
-        isPendingSync = true;
-
-        persistDurationLocally(finalDuration);
-
-        const wasUploaded = await saveAudioRecord({
-          lang,
-          date,
-          category: typeMeta.audioCategory,
-          index: item.word_index ?? item.item_index ?? item.id ?? index,
-          blob,
-          duration: finalDuration
-        });
-
-        if (wasUploaded) {
-          isPendingSync = false;
-        }
-      };
-
-      mediaRecorder.start();
-      isRecording = true;
-      elapsedSec = 0;
-      timerInterval = setInterval(() => {
-        elapsedSec += 1;
-      }, 1000);
-    } catch (err) {
-      console.error('Mic access error:', err);
-      alert('Microphone permission required for audio recordings.');
-    }
-  }
-
-  async function togglePlayback() {
-    if (isPlaying && audioEl) {
-      audioEl.pause();
-      isPlaying = false;
-      if (playbackInterval) clearInterval(playbackInterval);
-      return;
-    }
-
-    if (!resolvedUrl) {
-      isLoadingAudio = true;
-      try {
-        const itemIdx = item.word_index ?? item.item_index ?? item.id ?? index;
-        const res = await resolveAudioSource(lang, date, typeMeta.audioCategory, itemIdx, currentAudioDuration);
-        resolvedUrl = res.url;
-        isPendingSync = res.isPendingSync;
-      } finally {
-        isLoadingAudio = false;
-      }
-    }
-
-    setTimeout(() => {
-      if (!audioEl) return;
-      audioEl.play().then(() => {
-        isPlaying = true;
-        playbackInterval = setInterval(() => {
-          if (audioEl) {
-            currentTimeDisplay = formatTime(audioEl.currentTime);
-            playbackProgress = (audioEl.currentTime / (audioEl.duration || currentAudioDuration)) * 100;
-          }
-        }, 100);
-      }).catch((err) => {
-        console.error('Audio playback error:', err);
-        isPlaying = false;
-      });
-    }, 0);
-  }
 
   // RAF-Throttled Gyroscopic Mouse Move
   function handleMouseMove(e) {
@@ -383,26 +228,18 @@
       await navigator.clipboard.writeText(link);
       isCopied = true;
       setTimeout(() => (isCopied = false), 1800);
-    } catch {
-      // Fallback
-    }
+    } catch {}
   }
 </script>
 
-{#if resolvedUrl}
-  <audio
-    bind:this={audioEl}
-    src={resolvedUrl}
-    onended={() => { isPlaying = false; playbackProgress = 0; }}
-    preload="none"
-  ></audio>
-{/if}
-
 <div 
   class="relative w-full [perspective:1000px] select-none group"
-  style="--card-accent: {typeMeta.color}; --card-accent-sub: {typeMeta.colorSub};"
+  style="
+    --card-accent: {typeMeta.color}; 
+    --card-accent-sub: {typeMeta.colorSub};
+    content-visibility: auto;
+  "
 >
-  
   <div 
     bind:this={cardEl}
     role="presentation"
@@ -417,8 +254,7 @@
       transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease;
     "
   >
-    
-    <!-- 🌟 EXACT BACKLIGHT DIFFUSION LAYER MATCHING VOCABSEARCHSTREAM 🌟 -->
+    <!-- Backlight Diffusion Layer -->
     <div 
       class="pointer-events-none absolute -inset-1 rounded-3xl overflow-hidden opacity-30 group-hover:opacity-60 transition-opacity duration-300 -z-10"
     >
@@ -457,18 +293,15 @@
       {#if item.link}
         <div class="relative w-full min-h-[160px] max-h-80 overflow-hidden flex items-center justify-center p-3.5 z-10">
           
-          <!-- 🌟 HOLOGRAPHIC QUANTUM LOADING STAGE 🌟 -->
           {#if isMediaLoading}
             <div 
               class="absolute inset-3.5 rounded-2xl border border-white/10 bg-black/40 backdrop-blur-xl flex flex-col items-center justify-center space-y-3 overflow-hidden shadow-inner z-20 transition-opacity duration-300"
             >
-              <!-- Ambient Scanning Radar Beam -->
               <div 
                 class="absolute left-0 right-0 h-[2px] opacity-80 animate-radar"
                 style="background: linear-gradient(90deg, transparent 5%, var(--card-accent) 50%, transparent 95%); box-shadow: 0 0 14px var(--card-accent);"
               ></div>
 
-              <!-- Orbiting Particle Ring -->
               <div class="relative flex items-center justify-center">
                 <div 
                   class="w-12 h-12 rounded-full border border-white/20 animate-spin"
@@ -481,7 +314,6 @@
                 <Sparkles size={16} class="absolute text-white animate-pulse" />
               </div>
 
-              <!-- Status Badge -->
               <div class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/10 border border-white/10 shadow-xs backdrop-blur-md">
                 <span class="w-1.5 h-1.5 rounded-full animate-ping" style="background-color: var(--card-accent);"></span>
                 <span class="text-[10px] font-mono font-bold text-white/80 uppercase tracking-widest">
@@ -491,7 +323,6 @@
             </div>
           {/if}
 
-          <!-- Broken Link Fallback Chamber -->
           {#if hasMediaError}
             <div class="w-full h-44 rounded-2xl border border-dashed border-white/15 bg-black/40 backdrop-blur-md flex flex-col items-center justify-center space-y-1.5 text-neutral-400">
               <ImageOff size={22} class="opacity-60" />
@@ -499,6 +330,7 @@
             </div>
           {:else}
             <img 
+              use:initImage
               src={item.link} 
               alt={item.native_script} 
               loading="lazy"
@@ -531,7 +363,6 @@
       {/if}
 
       <div class="p-5 sm:p-6 flex flex-col justify-between flex-1 space-y-4 z-10 relative">
-        
         <div class="space-y-1.5">
           {#if !item.link}
             <div class="flex items-center justify-between pb-1">
@@ -556,7 +387,7 @@
             </div>
           {/if}
 
-          <!-- BOTH TEXT LINES DISPLAY SYNCHRONIZED TONE CHROMA -->
+          <!-- Synchronized Tone Chroma Text -->
           <div class="text-3xl sm:text-4xl font-black tracking-tight leading-none drop-shadow-xs">
             <ColoredText tokens={vocabTokens.primaryTokens} fallbackClass="text-[var(--text-primary)]" />
           </div>
@@ -568,79 +399,24 @@
           {/if}
         </div>
 
-        <!-- ACCORDION DRAWER -->
+        <!-- ACCORDION WITH ISOLATED AUDIOBAR -->
         <div 
           class="grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] {isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0 pointer-events-none'}"
         >
           <div class="overflow-hidden min-h-0">
             <div class="pt-3 border-t border-[var(--border-subtle)] space-y-3">
-              <div class="p-3.5 rounded-2xl bg-[var(--bg-base)]/80 border border-[var(--border-subtle)] space-y-3 shadow-inner">
-                <div class="flex items-center justify-between gap-3">
-                  <div class="flex items-center gap-2">
-                    {#if isRecording}
-                      <span class="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
-                      <span class="text-xs font-mono font-black text-rose-400">
-                        REC {formatTime(elapsedSec)}
-                      </span>
-                    {:else if currentAudioDuration > 0}
-                      <button
-                        type="button"
-                        onclick={togglePlayback}
-                        disabled={isLoadingAudio}
-                        class="flex items-center justify-center w-8 h-8 rounded-xl bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-elevated)] border border-[var(--border-subtle)] text-[var(--text-primary)] transition-transform active:scale-90 disabled:opacity-50 cursor-pointer shadow-xs"
-                      >
-                        {#if isLoadingAudio}
-                          <Sparkles size={14} class="animate-spin text-amber-400" />
-                        {:else if isPlaying}
-                          <Pause size={14} strokeWidth={2.8} />
-                        {:else}
-                          <Play size={14} strokeWidth={2.8} class="ml-0.5" />
-                        {/if}
-                      </button>
-
-                      <div class="space-y-0.5">
-                        <span class="text-xs font-mono font-bold text-[var(--text-primary)] block">
-                          {isPlaying ? currentTimeDisplay : formatTime(currentAudioDuration)}
-                        </span>
-                        {#if isPendingSync}
-                          <span class="text-[9px] font-mono text-amber-400 flex items-center gap-1">
-                            <CloudUpload size={10} /> Syncing
-                          </span>
-                        {/if}
-                      </div>
-                    {:else}
-                      <span class="text-xs font-mono text-[var(--text-muted)] italic">
-                        Ready to record
-                      </span>
-                    {/if}
-                  </div>
-
-                  <button
-                    type="button"
-                    onclick={toggleRecord}
-                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-white transition-all active:scale-90 cursor-pointer shadow-md {isRecording 
-                      ? 'bg-rose-500 hover:bg-rose-600 ring-2 ring-rose-400/30' 
-                      : 'bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-elevated)] text-[var(--text-primary)] border border-[var(--border-subtle)]'}"
-                  >
-                    {#if isRecording}
-                      <Square size={12} fill="currentColor" />
-                      <span>Stop</span>
-                    {:else}
-                      <Mic size={13} style="color: var(--card-accent);" />
-                      <span>{currentAudioDuration > 0 ? 'Re-record' : 'Record'}</span>
-                    {/if}
-                  </button>
-                </div>
-
-                {#if currentAudioDuration > 0 && !isRecording}
-                  <div class="w-full h-1.5 rounded-full bg-[var(--bg-surface)] overflow-hidden relative border border-[var(--border-subtle)]">
-                    <div 
-                      class="h-full rounded-full transition-all duration-150"
-                      style="width: {playbackProgress}%; background: linear-gradient(90deg, var(--card-accent), var(--card-accent-sub));"
-                    ></div>
-                  </div>
-                {/if}
-              </div>
+              <AudioBar 
+                {lang}
+                {date}
+                category={typeMeta.audioCategory}
+                {index}
+                initialDuration={item.audio_duration || 0}
+                accentColor={typeMeta.color}
+                accentColorSub={typeMeta.colorSub}
+                {type}
+                {item}
+                onDurationChange={(dur) => (audioDuration = dur)}
+              />
             </div>
           </div>
         </div>
@@ -652,7 +428,7 @@
         >
           <span class="flex items-center gap-1.5">
             <Mic size={12} style="color: var(--card-accent);" />
-            <span>{currentAudioDuration > 0 ? `${Math.round(currentAudioDuration)}s recorded` : 'Practice pronunciation'}</span>
+            <span>{audioDuration > 0 ? `${Math.round(audioDuration)}s recorded` : typeMeta.prompt}</span>
           </span>
           <ChevronDown size={13} class="transition-transform duration-300 {isExpanded ? 'rotate-180' : ''}" />
         </button>
@@ -712,6 +488,40 @@
             fallbackText="No video link logged."
           />
         </div>
+
+        <!-- CI ACCORDION DRAWER WITH AUDIOBAR -->
+        <div 
+          class="grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] {isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0 pointer-events-none'}"
+        >
+          <div class="overflow-hidden min-h-0">
+            <div class="pt-3 border-t border-[var(--border-subtle)] space-y-3">
+              <AudioBar 
+                {lang}
+                {date}
+                category={typeMeta.audioCategory}
+                {index}
+                initialDuration={item.audio_duration || 0}
+                accentColor={typeMeta.color}
+                accentColorSub={typeMeta.colorSub}
+                {type}
+                {item}
+                onDurationChange={(dur) => (audioDuration = dur)}
+              />
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onclick={() => (isExpanded = !isExpanded)}
+          class="w-full pt-2 flex items-center justify-between text-[11px] font-mono font-bold text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer border-t border-[var(--border-subtle)]"
+        >
+          <span class="flex items-center gap-1.5">
+            <Mic size={12} style="color: var(--card-accent);" />
+            <span>{audioDuration > 0 ? `${Math.round(audioDuration)}s recorded` : typeMeta.prompt}</span>
+          </span>
+          <ChevronDown size={13} class="transition-transform duration-300 {isExpanded ? 'rotate-180' : ''}" />
+        </button>
       </div>
 
     <!-- ============================================== -->
@@ -767,6 +577,40 @@
             fallbackText="Audio session (no video embed)."
           />
         </div>
+
+        <!-- LISTENING ACCORDION DRAWER WITH AUDIOBAR -->
+        <div 
+          class="grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] {isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0 pointer-events-none'}"
+        >
+          <div class="overflow-hidden min-h-0">
+            <div class="pt-3 border-t border-[var(--border-subtle)] space-y-3">
+              <AudioBar 
+                {lang}
+                {date}
+                category={typeMeta.audioCategory}
+                {index}
+                initialDuration={item.audio_duration || 0}
+                accentColor={typeMeta.color}
+                accentColorSub={typeMeta.colorSub}
+                {type}
+                {item}
+                onDurationChange={(dur) => (audioDuration = dur)}
+              />
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onclick={() => (isExpanded = !isExpanded)}
+          class="w-full pt-2 flex items-center justify-between text-[11px] font-mono font-bold text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer border-t border-[var(--border-subtle)]"
+        >
+          <span class="flex items-center gap-1.5">
+            <Mic size={12} style="color: var(--card-accent);" />
+            <span>{audioDuration > 0 ? `${Math.round(audioDuration)}s recorded` : typeMeta.prompt}</span>
+          </span>
+          <ChevronDown size={13} class="transition-transform duration-300 {isExpanded ? 'rotate-180' : ''}" />
+        </button>
       </div>
 
     <!-- ============================================== -->
@@ -824,6 +668,40 @@
             {grammarMeta.meaning}
           </p>
         {/if}
+
+        <!-- GRAMMAR ACCORDION DRAWER WITH AUDIOBAR -->
+        <div 
+          class="grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] {isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0 pointer-events-none'}"
+        >
+          <div class="overflow-hidden min-h-0">
+            <div class="pt-3 border-t border-[var(--border-subtle)] space-y-3">
+              <AudioBar 
+                {lang}
+                {date}
+                category={typeMeta.audioCategory}
+                {index}
+                initialDuration={item.audio_duration || 0}
+                accentColor={typeMeta.color}
+                accentColorSub={typeMeta.colorSub}
+                {type}
+                {item}
+                onDurationChange={(dur) => (audioDuration = dur)}
+              />
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onclick={() => (isExpanded = !isExpanded)}
+          class="w-full pt-2 flex items-center justify-between text-[11px] font-mono font-bold text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer border-t border-[var(--border-subtle)]"
+        >
+          <span class="flex items-center gap-1.5">
+            <Mic size={12} style="color: var(--card-accent);" />
+            <span>{audioDuration > 0 ? `${Math.round(audioDuration)}s recorded` : typeMeta.prompt}</span>
+          </span>
+          <ChevronDown size={13} class="transition-transform duration-300 {isExpanded ? 'rotate-180' : ''}" />
+        </button>
       </div>
 
     {/if}

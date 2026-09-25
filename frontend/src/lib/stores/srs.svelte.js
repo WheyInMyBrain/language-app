@@ -84,6 +84,10 @@ class SrsStore {
     return this.getDueCount(todayStr, 'audio');
   }
 
+  getWritingDueCount(todayStr) {
+    return this.getDueCount(todayStr, 'writing');
+  }
+
   /**
    * Rates an SRS card and atomically updates Yjs without leaking UI fields.
    */
