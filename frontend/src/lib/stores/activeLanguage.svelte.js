@@ -60,6 +60,13 @@ class ActiveLanguageStore {
     return this.current.colors;
   }
 
+  get themeColor() {
+    return (
+      this.current.colors?.theme?.dark_primary ||
+      this.current.colors?.theme?.light_primary
+    );
+  }
+
   get tones() {
     return this.current.tones;
   }

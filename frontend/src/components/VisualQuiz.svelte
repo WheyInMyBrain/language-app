@@ -7,19 +7,73 @@
   import MediaStage from './MediaStage.svelte';
   import ColoredText from './ColoredText.svelte';
 
+  // Razor-sharp vector icons
+  import { 
+    Sparkles, 
+    Volume2, 
+    Eye, 
+    RotateCcw, 
+    Calendar, 
+    Zap, 
+    Target,
+    CheckCircle2,
+    Clock
+  } from '@lucide/svelte';
+
   let { langCode } = $props();
 
   let todayStr = new Date().toISOString().substring(0, 10);
   let mode = $state('review'); // 'review' | 'cram'
   let isRevealed = $state(false);
   let isSubmitting = $state(false);
+  let isSpeaking = $state(false);
 
   let cramQueue = $state([]);
   let cramIndex = $state(0);
 
+  // 🌟 GYRO / TILT STATE (rAF-Throttled) 🌟
+  let cardStageEl = $state(null);
+  let tiltX = $state(0);
+  let tiltY = $state(0);
+  let glareX = $state(50);
+  let glareY = $state(50);
+  let isStageHovered = $state(false);
+  let tiltTicking = false;
+
+  function handleStageMouseMove(e) {
+    if (!cardStageEl || tiltTicking) return;
+    tiltTicking = true;
+
+    const rect = cardStageEl.getBoundingClientRect();
+    const clientX = e.clientX;
+    const clientY = e.clientY;
+
+    requestAnimationFrame(() => {
+      const normX = ((clientX - rect.left) / rect.width) * 2 - 1;
+      const normY = ((clientY - rect.top) / rect.height) * 2 - 1;
+
+      tiltX = -normY * 4.5;
+      tiltY = normX * 4.5;
+      glareX = ((clientX - rect.left) / rect.width) * 100;
+      glareY = ((clientY - rect.top) / rect.height) * 100;
+
+      tiltTicking = false;
+    });
+  }
+
+  function handleStageMouseLeave() {
+    isStageHovered = false;
+    tiltX = 0;
+    tiltY = 0;
+    glareX = 50;
+    glareY = 50;
+  }
+
   let langConfig = $derived(activeLanguage.current);
-  let colors = $derived(activeLanguage.colors);
-  let accentColor = $derived(colors?.vocab?.dark_primary || '#2e7d32');
+  let colors = $derived(activeLanguage.colors || {});
+  let themeColor = $derived(activeLanguage.themeColor || colors.theme || '#a855f7');
+  let vocabColor = $derived(colors.vocab?.primary || colors.vocab?.dark_primary || '#10b981');
+  let vocabColorSub = $derived(colors.vocab?.light_primary || '#34d399');
 
   // Read all visual cards from srsStore.cards
   let allCards = $derived.by(() => {
@@ -52,10 +106,36 @@
   let curInt = $derived(Number(currCard?.interval ?? 0));
   let curEase = $derived(Number(currCard?.ease ?? 2.50));
 
-  // Compute tone color tokens for the revealed answer
+  // 🌟 SYNCHRONIZED TONE CHROMA ENGINE (Dual line tone matching) 🌟
+  const tokenCache = new Map();
+  function getSynchronizedTokens(script, pron, cfg) {
+    const key = `${cfg?.code || 'zh-CN'}:${script || ''}:${pron || ''}`;
+    if (tokenCache.has(key)) return tokenCache.get(key);
+
+    const parsed = tokenizePhonetics(script, pron, cfg);
+    const primary = parsed.primaryTokens || [];
+    const secondary = parsed.secondaryTokens || [];
+    const coloredSecondary = secondary.filter(t => t.color);
+
+    const syncedPrimary = primary.map((tok, i) => {
+      if (tok.color) return tok;
+      const matchColor = secondary[i]?.color || coloredSecondary[i]?.color || coloredSecondary[0]?.color;
+      return matchColor ? { ...tok, color: matchColor } : tok;
+    });
+
+    const result = {
+      primaryTokens: syncedPrimary,
+      secondaryTokens: secondary
+    };
+
+    if (tokenCache.size > 800) tokenCache.clear();
+    tokenCache.set(key, result);
+    return result;
+  }
+
   let tokens = $derived(
     currCard
-      ? tokenizePhonetics(currCard.native, currCard.pronunciation, langConfig)
+      ? getSynchronizedTokens(currCard.native, currCard.pronunciation, langConfig)
       : { primaryTokens: [], secondaryTokens: [] }
   );
 
@@ -74,13 +154,15 @@
   function handleReveal() {
     isRevealed = true;
     if (currCard) {
-      playTTS(currCard.native, langCode || langConfig?.code || 'zh-CN');
+      handlePronounce();
     }
   }
 
   function handlePronounce() {
     if (!currCard) return;
+    isSpeaking = true;
     playTTS(currCard.native, langCode || langConfig?.code || 'zh-CN');
+    setTimeout(() => (isSpeaking = false), 1200);
   }
 
   async function handleSM2Grade(grade) {
@@ -110,156 +192,295 @@
   }
 </script>
 
-<div class="word-srs-main-studio relative flex flex-col gap-3.5 p-4 sm:p-5 rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-card)] shadow-xs select-none overflow-hidden">
-  <div class="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-emerald-500 to-blue-500 opacity-90"></div>
+<!-- 🌟 PHYSICAL GLASS POD CONTAINER 🌟 -->
+<div 
+  class="relative flex flex-col gap-4 sm:gap-5 p-4 sm:p-6 rounded-3xl border border-black/10 dark:border-white/15 bg-white/70 dark:bg-[#12131a]/75 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25),inset_0_1px_1px_rgba(255,255,255,0.45)] dark:shadow-[0_24px_50px_-12px_rgba(0,0,0,0.7),inset_0_1px_1px_rgba(255,255,255,0.15)] select-none backdrop-blur-2xl backdrop-saturate-[180%] overflow-hidden box-border"
+  style="--studio-theme: {vocabColor};"
+>
+  <!-- Top Specular Neon Lip -->
+  <div 
+    class="pointer-events-none absolute top-0 left-0 right-0 h-[2px] opacity-90 z-20"
+    style="background: linear-gradient(90deg, transparent 5%, {vocabColor} 30%, {vocabColorSub} 70%, transparent 95%); box-shadow: 0 1px 12px {vocabColor};"
+  ></div>
 
-  <div class="flex items-center justify-between flex-wrap gap-2 pt-0.5">
-    <div class="flex items-center gap-2">
-      <span class="text-base">🀄</span>
-      <span class="text-xs font-extrabold tracking-wide text-[var(--text-primary)]">
-        Vocabulary Studio
-      </span>
+  <!-- Header & Controls Rail -->
+  <div class="flex items-center justify-between flex-wrap gap-2.5 pt-0.5 relative z-10">
+    <div class="flex items-center gap-2.5">
+      <div 
+        class="w-9 h-9 rounded-2xl flex items-center justify-center border shadow-inner"
+        style="
+          background-color: color-mix(in srgb, {vocabColor} 18%, transparent);
+          border-color: color-mix(in srgb, {vocabColor} 38%, transparent);
+          color: {vocabColor};
+        "
+      >
+        <Sparkles size={17} strokeWidth={2.5} class="animate-pulse" />
+      </div>
+
+      <div>
+        <h2 class="text-xs sm:text-sm font-black tracking-tight uppercase text-neutral-900 dark:text-white flex items-center gap-1.5">
+          <span>Vocabulary Studio</span>
+          <span class="w-1.5 h-1.5 rounded-full" style="background-color: {vocabColor}; box-shadow: 0 0 6px {vocabColor};"></span>
+        </h2>
+        <span class="text-[10px] font-mono text-neutral-500 dark:text-white/40 block">
+          Visual Active Recall & Spaced Repetition
+        </span>
+      </div>
     </div>
 
-    <div class="flex items-center gap-1.5">
+    <!-- Mode Switcher Trench -->
+    <div class="flex items-center gap-1.5 p-1 rounded-2xl bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] shadow-inner ml-auto">
       <button
+        type="button"
         onclick={startReview}
-        class="px-3 py-1 text-xs font-extrabold rounded-lg border transition-all cursor-pointer {mode === 'review' 
-          ? 'bg-[var(--interactive-accent,var(--text-primary))] text-[var(--bg-base)] border-transparent' 
-          : 'bg-[var(--bg-base)] text-[var(--text-primary)] border-[var(--border-card)]'}"
+        class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-150 cursor-pointer {mode === 'review' 
+          ? 'text-white shadow-xs' 
+          : 'text-neutral-500 dark:text-white/50 hover:text-neutral-900 dark:hover:text-white'}"
+        style={mode === 'review' ? `background: linear-gradient(135deg, ${vocabColor}, ${vocabColorSub}); box-shadow: 0 2px 10px -2px ${vocabColor};` : ''}
       >
-        🎯 Due ({dueCards.length})
+        <Target size={12} strokeWidth={2.8} />
+        <span>Due ({dueCards.length})</span>
       </button>
 
       <button
+        type="button"
         onclick={startCram}
-        class="px-3 py-1 text-xs font-extrabold rounded-lg border transition-all cursor-pointer {mode === 'cram' 
-          ? 'bg-[var(--interactive-accent,var(--text-primary))] text-[var(--bg-base)] border-transparent' 
-          : 'bg-[var(--bg-base)] text-[var(--text-primary)] border-[var(--border-card)]'}"
+        class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all duration-150 cursor-pointer {mode === 'cram' 
+          ? 'text-white shadow-xs' 
+          : 'text-neutral-500 dark:text-white/50 hover:text-neutral-900 dark:hover:text-white'}"
+        style={mode === 'cram' ? `background: linear-gradient(135deg, ${vocabColor}, ${vocabColorSub}); box-shadow: 0 2px 10px -2px ${vocabColor};` : ''}
       >
-        ⚡ Cram All ({allCards.length})
+        <Zap size={12} strokeWidth={2.8} />
+        <span>Cram ({allCards.length})</span>
       </button>
     </div>
   </div>
 
   {#if !currCard}
-    <div class="text-center py-9 px-4 space-y-2">
-      <div class="text-base font-extrabold text-[var(--text-primary)]">
-        {mode === 'review' ? '🎉 All scheduled vocabulary reviews are complete!' : '🎉 You have completed the cram session!'}
+    <!-- Empty / Session Cleared State -->
+    <div class="py-14 px-6 text-center space-y-3 rounded-2xl border border-dashed border-black/10 dark:border-white/10 bg-white/30 dark:bg-white/[0.02] backdrop-blur-md">
+      <div 
+        class="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto border shadow-sm"
+        style="
+          background-color: color-mix(in srgb, {vocabColor} 18%, transparent);
+          border-color: color-mix(in srgb, {vocabColor} 38%, transparent);
+          color: {vocabColor};
+        "
+      >
+        <CheckCircle2 size={24} strokeWidth={2.5} />
       </div>
-      <div class="text-xs text-[var(--text-muted)]">
-        {mode === 'review' ? `No cards are due today (${todayStr}).` : 'Click below to shuffle and start another cram session.'}
+
+      <div class="space-y-1">
+        <h3 class="text-sm font-black text-neutral-900 dark:text-white tracking-tight">
+          {mode === 'review' ? 'Queue Cleared for Today' : 'Cram Session Completed'}
+        </h3>
+        <p class="text-xs text-neutral-500 dark:text-white/40 max-w-xs mx-auto leading-relaxed">
+          {mode === 'review' 
+            ? `All scheduled visual flashcards are completed (${todayStr}).` 
+            : 'You reviewed all available flashcards in the cram deck.'}
+        </p>
       </div>
 
       {#if mode === 'cram' && allCards.length > 0}
         <button
+          type="button"
           onclick={startCram}
-          class="mt-3 px-4 py-2 rounded-xl text-xs font-extrabold bg-[var(--interactive-accent,var(--text-primary))] text-[var(--bg-base)] cursor-pointer"
+          class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-black text-white cursor-pointer active:scale-95 transition-all shadow-md mt-2"
+          style="background: linear-gradient(135deg, {vocabColor}, {vocabColorSub});"
         >
-          🔄 Restart Cram Mode
+          <RotateCcw size={12} strokeWidth={2.8} />
+          <span>Restart Cram Session</span>
         </button>
       {/if}
     </div>
   {:else}
-    <div class="flex flex-col items-center gap-4 p-4 rounded-xl bg-[var(--bg-base)] border border-[var(--border-card)] text-center">
-      <div class="w-full max-w-[280px] mx-auto min-h-[160px] flex items-center justify-center">
-        <MediaStage
-          src={currCard.link || ''}
-          alt="Visual Recall Prompt"
-          fallbackChar={isRevealed ? currCard.native : '❓'}
-        />
-      </div>
+    <!-- 🌟 3D GYROSCOPIC VISUAL RECALL HERO STAGE 🌟 -->
+    <div class="relative w-full [perspective:1000px] box-border">
+      <div 
+        bind:this={cardStageEl}
+        role="presentation"
+        onmousemove={handleStageMouseMove}
+        onmouseenter={() => (isStageHovered = true)}
+        onmouseleave={handleStageMouseLeave}
+        class="relative w-full rounded-3xl border border-black/10 dark:border-white/15 bg-white/75 dark:bg-[#0c0d14]/85 shadow-2xl p-4 sm:p-6 flex flex-col items-center gap-5 text-center overflow-hidden will-change-transform transition-shadow duration-200"
+        style="
+          transform: {isStageHovered 
+            ? `rotateX(${tiltX}deg) rotateY(${tiltY}deg) translateY(-3px) scale(1.008)` 
+            : 'rotateX(0deg) rotateY(0deg) translateY(0) scale(1)'};
+          transform-style: preserve-3d;
+          transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease;
+          box-shadow: {isStageHovered 
+            ? `0 24px 50px -12px rgba(0,0,0,0.65), 0 0 28px color-mix(in srgb, ${vocabColor} 25%, transparent)` 
+            : '0 10px 30px -8px rgba(0,0,0,0.35)'};
+        "
+      >
+        <!-- Full-Bleed Artwork / Theme Backlight Aura -->
+        {#if currCard.link}
+          <div class="pointer-events-none absolute inset-0 rounded-3xl overflow-hidden -z-10">
+            <img 
+              src={currCard.link} 
+              alt="" 
+              aria-hidden="true" 
+              class="w-full h-full object-cover blur-2xl scale-135 saturate-[240%] opacity-40 dark:opacity-50 transition-transform duration-500 transform-gpu"
+            />
+            <div class="absolute inset-0 bg-gradient-to-b from-white/40 via-white/15 to-white/85 dark:from-black/40 dark:via-black/20 dark:to-black/90"></div>
+          </div>
+        {:else}
+          <div 
+            class="pointer-events-none absolute inset-0 rounded-3xl opacity-25 -z-10"
+            style="background: radial-gradient(circle 380px at 50% 25%, {vocabColor}, transparent 75%);"
+          ></div>
+        {/if}
 
-      {#if !isRevealed}
-        <button
-          onclick={handleReveal}
-          class="px-8 py-2 rounded-xl font-extrabold text-xs bg-[var(--interactive-accent,var(--text-primary))] text-[var(--bg-base)] hover:opacity-90 active:scale-95 transition-transform cursor-pointer"
-        >
-          👁️ Reveal Answer
-        </button>
-      {/if}
+        <!-- Specular Cursor Sheen -->
+        <div 
+          class="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-150 z-20 {isStageHovered ? 'opacity-100' : ''}"
+          style="background: radial-gradient(circle 300px at {glareX}% {glareY}%, rgba(255,255,255,0.16), transparent 75%);"
+        ></div>
 
-      {#if isRevealed}
-        <div class="flex flex-col items-center gap-3.5 w-full border-t border-[var(--border-card)] pt-4">
-          <div class="flex items-center justify-between gap-4 p-3 bg-[var(--bg-surface)] rounded-2xl border border-[var(--border-card)] w-full max-w-sm">
-            <div class="flex flex-col items-start gap-1 text-left min-w-0">
-              <div class="text-3xl sm:text-4xl font-black tracking-tight leading-none font-serif">
-                <ColoredText tokens={tokens.primaryTokens} fallbackClass="text-[var(--text-primary)]" />
+        <!-- Top Specular Neon Lip -->
+        <div 
+          class="pointer-events-none absolute top-0 left-0 right-0 h-[2px] opacity-80 z-20"
+          style="background: linear-gradient(90deg, transparent, {vocabColor}, {vocabColorSub}, transparent);"
+        ></div>
+
+        <!-- Top Pill Header (Metadata, Queue Count, Due Indicator) -->
+        <div class="w-full flex items-center justify-between text-[10px] font-mono font-bold text-neutral-500 dark:text-white/50 relative z-10">
+          <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/10 shadow-2xs backdrop-blur-md">
+            <Calendar size={10} />
+            <span>{currCard.source_date ? currCard.source_date.slice(5) : 'Vault'}</span>
+          </span>
+
+          <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/10 shadow-2xs backdrop-blur-md">
+            <Clock size={10} />
+            <span>Due: {currCard.due_date ? (currCard.due_date === todayStr ? 'Today' : currCard.due_date.slice(5)) : 'Immediate'}</span>
+          </span>
+        </div>
+
+        <!-- Media Stage Arena -->
+        <div class="w-full max-w-[320px] mx-auto min-h-[190px] flex items-center justify-center p-3 rounded-2xl bg-black/[0.04] dark:bg-black/45 border border-white/20 shadow-inner overflow-hidden relative z-10">
+          <MediaStage
+            src={currCard.link || ''}
+            alt="Visual Recall Prompt"
+            fallbackChar={isRevealed ? currCard.native : '❓'}
+          />
+        </div>
+
+        <!-- Reveal Action Button -->
+        {#if !isRevealed}
+          <button
+            type="button"
+            onclick={handleReveal}
+            class="inline-flex items-center gap-2 px-8 py-2.5 rounded-2xl font-black text-xs text-white transition-all duration-150 active:scale-95 cursor-pointer border-none shadow-lg hover:brightness-105 relative z-10"
+            style="
+              background: linear-gradient(135deg, {vocabColor}, {vocabColorSub});
+              box-shadow: 0 4px 18px -2px color-mix(in srgb, {vocabColor} 45%, transparent);
+            "
+          >
+            <Eye size={14} strokeWidth={2.8} />
+            <span>Reveal Answer</span>
+          </button>
+        {/if}
+
+        <!-- Revealed Details & Grading Action Deck -->
+        {#if isRevealed}
+          <div class="flex flex-col items-center gap-4 w-full border-t border-black/[0.08] dark:border-white/10 pt-4 relative z-10 animate-in fade-in slide-in-from-bottom-2 duration-200">
+            
+            <!-- Synchronized Tone-Colored Character Banner -->
+            <div class="flex items-center justify-between gap-4 p-3.5 sm:p-4 rounded-2xl bg-white/60 dark:bg-black/50 border border-black/[0.08] dark:border-white/15 w-full max-w-md shadow-inner backdrop-blur-md">
+              <div class="flex flex-col items-start gap-1 text-left min-w-0">
+                <div class="text-3xl sm:text-4xl font-black tracking-tight leading-none drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]">
+                  <ColoredText tokens={tokens.primaryTokens} fallbackClass="text-neutral-900 dark:text-white" />
+                </div>
+
+                {#if currCard.pronunciation}
+                  <div class="text-sm sm:text-base font-mono font-bold tracking-tight mt-0.5 drop-shadow-[0_1px_4px_rgba(0,0,0,0.5)]">
+                    <ColoredText tokens={tokens.secondaryTokens} fallbackClass="text-neutral-600 dark:text-white/70" />
+                  </div>
+                {/if}
               </div>
 
-              {#if currCard.pronunciation}
-                <div class="text-sm sm:text-base font-bold tracking-tight mt-1">
-                  <ColoredText tokens={tokens.secondaryTokens} fallbackClass="text-[var(--text-muted)]" />
-                </div>
+              <!-- Audio Pronounce Trigger -->
+              <button
+                type="button"
+                onclick={handlePronounce}
+                class="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all active:scale-90 cursor-pointer shrink-0 shadow-2xs backdrop-blur-md"
+                style="
+                  background-color: color-mix(in srgb, {vocabColor} 18%, transparent);
+                  border-color: color-mix(in srgb, {vocabColor} 38%, transparent);
+                  color: {vocabColor};
+                "
+                title="Play pronunciation"
+              >
+                <Volume2 size={13} class={isSpeaking ? 'text-emerald-400 animate-pulse' : ''} />
+                <span>Listen</span>
+              </button>
+            </div>
+
+            <!-- SM-2 Rating Deck -->
+            <div class="flex gap-2 justify-center flex-wrap pt-1 w-full max-w-lg">
+              {#if mode === 'review'}
+                <button
+                  type="button"
+                  onclick={() => handleSM2Grade('again')}
+                  disabled={isSubmitting}
+                  class="px-3.5 py-2 rounded-xl text-xs font-black bg-rose-500/15 text-rose-500 border border-rose-500/35 hover:bg-rose-500/25 active:scale-95 transition-all cursor-pointer disabled:opacity-50 shadow-xs"
+                >
+                  ❌ Again ({getIntervalPreview({ interval: curInt, ease: curEase, grade: 'again' })})
+                </button>
+
+                <button
+                  type="button"
+                  onclick={() => handleSM2Grade('hard')}
+                  disabled={isSubmitting}
+                  class="px-3.5 py-2 rounded-xl text-xs font-black bg-amber-500/15 text-amber-500 border border-amber-500/35 hover:bg-amber-500/25 active:scale-95 transition-all cursor-pointer disabled:opacity-50 shadow-xs"
+                >
+                  ⚡ Hard ({getIntervalPreview({ interval: curInt, ease: curEase, grade: 'hard' })})
+                </button>
+
+                <button
+                  type="button"
+                  onclick={() => handleSM2Grade('good')}
+                  disabled={isSubmitting}
+                  class="px-3.5 py-2 rounded-xl text-xs font-black bg-emerald-500/15 text-emerald-500 border border-emerald-500/35 hover:bg-emerald-500/25 active:scale-95 transition-all cursor-pointer disabled:opacity-50 shadow-xs"
+                >
+                  👍 Good ({getIntervalPreview({ interval: curInt, ease: curEase, grade: 'good' })})
+                </button>
+
+                <button
+                  type="button"
+                  onclick={() => handleSM2Grade('easy')}
+                  disabled={isSubmitting}
+                  class="px-3.5 py-2 rounded-xl text-xs font-black bg-indigo-500/15 text-indigo-500 border border-indigo-500/35 hover:bg-indigo-500/25 active:scale-95 transition-all cursor-pointer disabled:opacity-50 shadow-xs"
+                >
+                  🌟 Easy ({getIntervalPreview({ interval: curInt, ease: curEase, grade: 'easy' })})
+                </button>
+              {:else}
+                <button
+                  type="button"
+                  onclick={handleCramFail}
+                  class="px-5 py-2 rounded-xl text-xs font-black bg-rose-500/15 text-rose-500 border border-rose-500/35 hover:bg-rose-500/25 active:scale-95 transition-all cursor-pointer shadow-xs"
+                >
+                  ❌ Fail / Repeat
+                </button>
+
+                <button
+                  type="button"
+                  onclick={handleCramPass}
+                  class="px-5 py-2 rounded-xl text-xs font-black bg-emerald-500/15 text-emerald-500 border border-emerald-500/35 hover:bg-emerald-500/25 active:scale-95 transition-all cursor-pointer shadow-xs"
+                >
+                  ✅ Pass / Next
+                </button>
               {/if}
             </div>
 
-            <button
-              onclick={handlePronounce}
-              class="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all active:scale-95 cursor-pointer shrink-0"
-              style="background: {accentColor}18; color: {accentColor}; border-color: {accentColor}35;"
-              title="Play Pronunciation"
-            >
-              <span>🔊</span>
-              <span>Listen</span>
-            </button>
+            <div class="text-[10px] font-mono text-neutral-400 dark:text-white/40">
+              Interval: {curInt}d • Factor: {curEase.toFixed(2)}
+            </div>
+
           </div>
-
-          <div class="flex gap-2 justify-center flex-wrap pt-1">
-            {#if mode === 'review'}
-              <button
-                onclick={() => handleSM2Grade('again')}
-                disabled={isSubmitting}
-                class="px-3 py-1.5 rounded-lg text-xs font-extrabold bg-rose-500/15 text-rose-500 border border-rose-500/30 hover:bg-rose-500/25 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-              >
-                ❌ Again ({getIntervalPreview({ interval: curInt, ease: curEase, grade: 'again' })})
-              </button>
-
-              <button
-                onclick={() => handleSM2Grade('hard')}
-                disabled={isSubmitting}
-                class="px-3 py-1.5 rounded-lg text-xs font-extrabold bg-amber-500/15 text-amber-500 border border-amber-500/30 hover:bg-amber-500/25 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-              >
-                ⚡ Hard ({getIntervalPreview({ interval: curInt, ease: curEase, grade: 'hard' })})
-              </button>
-
-              <button
-                onclick={() => handleSM2Grade('good')}
-                disabled={isSubmitting}
-                class="px-3 py-1.5 rounded-lg text-xs font-extrabold bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 hover:bg-emerald-500/25 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-              >
-                👍 Good ({getIntervalPreview({ interval: curInt, ease: curEase, grade: 'good' })})
-              </button>
-
-              <button
-                onclick={() => handleSM2Grade('easy')}
-                disabled={isSubmitting}
-                class="px-3 py-1.5 rounded-lg text-xs font-extrabold bg-indigo-500/15 text-indigo-500 border border-indigo-500/30 hover:bg-indigo-500/25 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-              >
-                🌟 Easy ({getIntervalPreview({ interval: curInt, ease: curEase, grade: 'easy' })})
-              </button>
-            {:else}
-              <button
-                onclick={handleCramFail}
-                class="px-4 py-2 rounded-lg text-xs font-extrabold bg-rose-500/15 text-rose-500 border border-rose-500/35 hover:bg-rose-500/25 active:scale-95 transition-all cursor-pointer"
-              >
-                ❌ Fail / Repeat
-              </button>
-
-              <button
-                onclick={handleCramPass}
-                class="px-4 py-2 rounded-lg text-xs font-extrabold bg-emerald-500/15 text-emerald-500 border border-emerald-500/35 hover:bg-emerald-500/25 active:scale-95 transition-all cursor-pointer"
-              >
-                ✅ Pass / Next
-              </button>
-            {/if}
-          </div>
-
-          <div class="text-[11px] font-mono text-[var(--text-muted)] opacity-60">
-            Due: {currCard.due_date || 'Today'} • Date: {currCard.source_date || '—'}
-          </div>
-        </div>
-      {/if}
+        {/if}
+      </div>
     </div>
   {/if}
 </div>

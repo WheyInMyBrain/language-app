@@ -1,5 +1,7 @@
+// frontend/src/lib/stores/metadata.svelte.js
 import { createSyncedDoc, getDocHandle } from '../yjs.js';
-import { CONFIG } from '../config.js';
+
+const ROOM_METADATA = 'global:metadata';
 
 class MetadataStore {
   connectionStatus = $state('connecting'); // 'connecting' | 'connected' | 'disconnected'
@@ -13,7 +15,7 @@ class MetadataStore {
   init() {
     if (this.#docHandle) return;
 
-    this.#docHandle = createSyncedDoc(CONFIG.ROOM_METADATA, (status) => {
+    this.#docHandle = createSyncedDoc(ROOM_METADATA, (status) => {
       this.connectionStatus = status;
     });
 
@@ -46,18 +48,11 @@ class MetadataStore {
    * Recalculates and updates calendar_index for a specific day
    */
   refreshDayTotals(langCode, date) {
-    if (!this.#docHandle?.doc) {
-      console.warn('[MetadataStore] Metadata doc not loaded yet.');
-      return;
-    }
+    if (!this.#docHandle?.doc) return;
 
     const roomName = `${langCode}:${date}`;
-    // Fall back to creating handle if not yet cached
     const dayHandle = getDocHandle(roomName) || createSyncedDoc(roomName);
-    if (!dayHandle?.doc) {
-      console.warn(`[MetadataStore] Day doc ${roomName} not accessible.`);
-      return;
-    }
+    if (!dayHandle?.doc) return;
 
     const dayDoc = dayHandle.doc;
     const metaMap = dayDoc.getMap('meta');
@@ -87,7 +82,7 @@ class MetadataStore {
 
     for (const act of activities) {
       const type = act.activity_type;
-      const linkDur = Number(act.link_duration) || 0;
+      const linkDur = Number(act.link_duration || act.durationSec) || 0;
       const audioDur = Number(act.audio_duration) || 0;
 
       if (!isNaN(audioDur) && audioDur > 0) {
@@ -110,14 +105,6 @@ class MetadataStore {
     // 2. Calculate Listening Time: min(3, rev) * CI + listening
     const ciMultiplier = Math.min(3, revision);
     const totalListeningSec = pureListeningSec + (ciMultiplier * ciLinkSec);
-
-    console.log(`[MetadataStore] 📊 Syncing ${roomName}:`, {
-      revision,
-      vocabAudioSec,
-      actAudioSec,
-      totalSpeakingSec,
-      totalListeningSec
-    });
 
     // 3. Write directly to root calendar_index
     const calendarMap = this.#docHandle.doc.getMap('calendar_index');

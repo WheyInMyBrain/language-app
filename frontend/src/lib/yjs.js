@@ -1,9 +1,15 @@
+// frontend/src/lib/yjs.js
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { IndexeddbPersistence } from 'y-indexeddb';
-import { CONFIG } from './config.js';
 
 const activeHandles = new Map();
+
+function getWsUrl() {
+  if (typeof window === 'undefined') return 'ws://localhost:3000/ws';
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${window.location.host}/ws`;
+}
 
 /**
  * Creates or retrieves a cached Yjs document synchronized with
@@ -19,8 +25,8 @@ export function createSyncedDoc(roomName, onStatusChange = null) {
   // 1. Instant local-first IndexedDB persistence
   const idbProvider = new IndexeddbPersistence(roomName, doc);
 
-  // 2. Real-time WebSocket sync to Rust backend
-  const wsProvider = new WebsocketProvider(CONFIG.WS_BASE, roomName, doc);
+  // 2. Real-time WebSocket sync through Vite proxy
+  const wsProvider = new WebsocketProvider(getWsUrl(), roomName, doc);
 
   if (onStatusChange) {
     wsProvider.on('status', ({ status }) => {
@@ -28,7 +34,6 @@ export function createSyncedDoc(roomName, onStatusChange = null) {
     });
   }
 
-  // Cleanup helper when leaving views or evicting docs
   const destroy = () => {
     activeHandles.delete(roomName);
     wsProvider.destroy();
@@ -37,17 +42,11 @@ export function createSyncedDoc(roomName, onStatusChange = null) {
   };
 
   const handle = { doc, idbProvider, wsProvider, destroy };
-
-  // Store in active cache
   activeHandles.set(roomName, handle);
 
   return handle;
 }
 
-/**
- * Synchronously retrieves an active room handle without creating a new connection.
- * Used by services (e.g., dailyLogService) to mutate indexes and metadata in-memory.
- */
 export function getDocHandle(roomName) {
   return activeHandles.get(roomName) || null;
 }

@@ -4,63 +4,141 @@
   :root {
     color-scheme: light dark;
 
-    /* Light Mode: Warm Solarized Canvas */
-    --bg-base: #fdf6e3;
-    --bg-surface: #eee8d5;
-    --bg-surface-active: #e0d7c3;
-    --border-card: #d3cbb7;
-    --border-hover: #b8af96;
-    --text-primary: #073642;
-    --text-muted: #657b83;
-    --badge-bg: #e6dfcb;
+    /* --- Light Mode: Crisp Studio Canvas --- */
+    --bg-base: #f8fafc;
+    --bg-surface: #ffffff;
+    --bg-surface-elevated: #f1f5f9;
+    --bg-surface-active: #e2e8f0;
+
+    --border-subtle: rgba(15, 23, 42, 0.06);
+    --border-card: rgba(15, 23, 42, 0.1);
+    --border-hover: rgba(15, 23, 42, 0.2);
+
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #94a3b8;
+
+    --badge-bg: rgba(15, 23, 42, 0.04);
+    --accent: #4f46e5;
+    --accent-glow: rgba(79, 70, 229, 0.15);
+    
+    --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+    --card-shadow-hover: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
   }
 
   @media (prefers-color-scheme: dark) {
     :root {
-      /* Dark Mode: Pure OLED Zero-Black */
-      --bg-base: #000000;
-      --bg-surface: #0a0a0a;
-      --bg-surface-active: #161616;
-      --border-card: #222222;
-      --border-hover: #333333;
-      --text-primary: #f5f5f5;
-      --text-muted: #888888;
-      --badge-bg: #111111;
-    }
-  }
+      /* --- Dark Mode: Deep Obsidian with Layered Glass --- */
+      --bg-base: #07080b;
+      --bg-surface: #0f1117;
+      --bg-surface-elevated: #171b26;
+      --bg-surface-active: #212636;
 
-  .overscroll-x-contain {
-    -webkit-overflow-scrolling: touch;
-    will-change: scroll-position;
+      --border-subtle: rgba(255, 255, 255, 0.05);
+      --border-card: rgba(255, 255, 255, 0.09);
+      --border-hover: rgba(255, 255, 255, 0.18);
+
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+
+      --badge-bg: rgba(255, 255, 255, 0.06);
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.25);
+
+      --card-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
+      --card-shadow-hover: 0 14px 34px -4px rgba(0, 0, 0, 0.7);
+    }
   }
 
   html, body {
     background-color: var(--bg-base);
     color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Geist", "Inter", "Segoe UI", Roboto, sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
     overscroll-behavior: none;
     overscroll-behavior-x: none;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Allow selectable text inside lessons, vocab, and quizzes */
+  body {
     user-select: none;
     -webkit-user-select: none;
   }
-
-  /* Hide scrollbar everywhere while preserving scrolling */
-  * {
-    scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none; /* IE / Edge */
+  
+  .selectable-text, p, span, h1, h2, h3, h4, h5, h6 {
+    user-select: text;
+    -webkit-user-select: text;
   }
 
+  /* Native scrollbar suppression */
+  * {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
   *::-webkit-scrollbar {
-    display: none; /* Safari, Chrome, iOS WebKit */
+    display: none;
     width: 0px;
     height: 0px;
   }
 
+  /* Safe Area paddings for notched devices and PWAs */
   .safe-top {
     padding-top: max(env(safe-area-inset-top), 0.75rem);
   }
   .safe-bottom {
     padding-bottom: max(env(safe-area-inset-bottom), 1rem);
+  }
+}
+
+/* Reusable tactile utility tokens */
+@layer utilities {
+  .surface-card {
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-card);
+    box-shadow: var(--card-shadow);
+    border-radius: 1rem;
+    transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1),
+                border-color 160ms ease,
+                box-shadow 160ms ease,
+                background-color 160ms ease;
+  }
+
+  .surface-card-interactive {
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-card);
+    box-shadow: var(--card-shadow);
+    border-radius: 1rem;
+    cursor: pointer;
+    transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1),
+                border-color 160ms ease,
+                box-shadow 160ms ease;
+  }
+  .surface-card-interactive:hover {
+    transform: translateY(-2px);
+    border-color: var(--border-hover);
+    box-shadow: var(--card-shadow-hover);
+  }
+  .surface-card-interactive:active {
+    transform: translateY(0px) scale(0.99);
+  }
+
+  /* Frosted Glass Header/Modal */
+  .surface-glass {
+    background-color: color-mix(in srgb, var(--bg-base) 75%, transparent);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  /* Subtly illuminated border for current-day / active cards */
+  .glow-border {
+    border-color: var(--accent);
+    box-shadow: 0 0 18px -3px var(--accent-glow);
   }
 }

@@ -3,6 +3,22 @@
   import { activeLanguage } from '../lib/stores/activeLanguage.svelte.js';
   import { srsStore } from '../lib/stores/srs.svelte.js';
 
+  import { 
+    Sparkles, 
+    CheckCircle2, 
+    AlertTriangle, 
+    Flame, 
+    ArrowRight, 
+    Clock, 
+    Play, 
+    Headphones, 
+    Mic, 
+    BookOpen, 
+    MessageSquare,
+    Calendar,
+    Eye
+  } from '@lucide/svelte';
+
   let { onSelectDate } = $props();
 
   function formatLocalDate(d) {
@@ -15,291 +31,680 @@
   const now = new Date();
   const todayStr = formatLocalDate(now);
 
-  // 1. Reactive State
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = formatLocalDate(tomorrow);
+
+  // 1. Reactive Store Bindings
   let langCode = $derived(metadataStore.activeLanguage);
-  let goals = $derived(activeLanguage.goals);
-  let colors = $derived(activeLanguage.colors);
+  let goals = $derived(activeLanguage.goals || {});
+  let colors = $derived(activeLanguage.colors || {});
+  let themeColor = $derived(activeLanguage.themeColor || '#a855f7');
 
   let todayKey = $derived(`${langCode}:${todayStr}`);
-  let todayLog = $derived(metadataStore.calendarIndex[todayKey] || null);
+  let todayLog = $derived(metadataStore.calendarIndex?.[todayKey] || null);
 
   let vocabDone = $derived(todayLog?.word || 0);
-  let grammarDone = $derived(todayLog?.grammar || 0);
-  let ciDone = $derived(todayLog?.ci || 0);
   let listeningMinDone = $derived(Math.round((todayLog?.listening_time || 0) / 60));
   let speakingMinDone = $derived(Math.round((todayLog?.speaking_time || 0) / 60));
+  let ciDone = $derived(todayLog?.ci || 0);
+  let grammarDone = $derived(todayLog?.grammar || 0);
 
-  // Visual-only SRS due count
-  let flashcardsDue = $derived(srsStore.getVisualDueCount(todayStr));
+  // Dual SRS Deck Counters
+  let srsCounts = $derived.by(() => {
+    const raw = srsStore.cards || {};
+    let visualDue = 0;
+    let audioDue = 0;
 
-  // 2. SVG Ring Math (Radius: 28, Circumference ~ 175.93)
-  const RADIUS = 28;
-  const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+    for (const item of Object.values(raw)) {
+      if (!item) continue;
+      const isDue = !item.due_date || item.due_date <= todayStr;
+      if (isDue) {
+        if (item.card_type === 'listening') {
+          audioDue++;
+        } else {
+          visualDue++;
+        }
+      }
+    }
+    return { visualDue, audioDue, totalDue: visualDue + audioDue };
+  });
 
-  function getOffset(current, target) {
-    if (!target || target <= 0) return CIRCUMFERENCE;
-    const progress = Math.min(Math.max(current / target, 0), 1);
-    return CIRCUMFERENCE * (1 - progress);
-  }
+  // Interactive Hover State
+  let hoveredRingId = $state(null);
 
   function getPct(current, target) {
     if (!target || target <= 0) return 0;
     return Math.min(Math.round((current / target) * 100), 100);
   }
 
-  // 3. Ring Specifications (Habits with targets)
-  let ringItems = $derived([
+  // 5 concentric rings (Radii calibrated Outer -> Inner)
+  const CONCENTRIC_CONFIG = [
+    { radius: 84, stroke: 8.5 }, // 1. Vocabulary (Outer)
+    { radius: 71, stroke: 8.5 }, // 2. Listening
+    { radius: 58, stroke: 8.5 }, // 3. Speaking
+    { radius: 45, stroke: 8.5 }, // 4. CI Video
+    { radius: 32, stroke: 8.5 }  // 5. Grammar (Inner)
+  ];
+
+  let concentricRings = $derived([
     {
       id: 'vocab',
-      title: 'Vocab',
-      icon: '🗣️',
+      title: 'Vocabulary',
+      icon: MessageSquare,
       current: vocabDone,
-      target: goals.vocab,
-      unit: '',
-      color: colors.vocab?.dark_primary || '#2e7d32'
+      target: goals.vocab || 10,
+      unit: 'w',
+      color: colors.vocab?.primary || colors.vocab?.dark_primary || '#10b981',
+      colorSub: colors.vocab?.light_primary || '#34d399',
+      ...CONCENTRIC_CONFIG[0]
     },
     {
-      id: 'grammar',
-      title: 'Grammar',
-      icon: '📚',
-      current: grammarDone,
-      target: goals.grammar,
-      unit: '',
-      color: colors.grammar?.dark_primary || '#01579b'
+      id: 'listening',
+      title: 'Listening',
+      icon: Headphones,
+      current: listeningMinDone,
+      target: goals.listening_minutes || 30,
+      unit: 'm',
+      color: colors.listening?.primary || colors.listening?.dark_primary || '#f97316',
+      colorSub: colors.listening?.light_primary || '#fb923c',
+      ...CONCENTRIC_CONFIG[1]
+    },
+    {
+      id: 'speaking',
+      title: 'Speaking',
+      icon: Mic,
+      current: speakingMinDone,
+      target: goals.speaking_minutes || 15,
+      unit: 'm',
+      color: colors.speaking?.primary || colors.speaking?.dark_primary || '#ec4899',
+      colorSub: colors.speaking?.light_primary || '#f472b6',
+      ...CONCENTRIC_CONFIG[2]
     },
     {
       id: 'ci',
       title: 'CI Video',
-      icon: '📺',
+      icon: Play,
       current: ciDone,
-      target: goals.ci,
-      unit: '',
-      color: colors.ci?.dark_primary || '#6a1b9a'
+      target: goals.ci || 1,
+      unit: 'v',
+      color: colors.ci?.primary || colors.ci?.dark_primary || '#a855f7',
+      colorSub: colors.ci?.light_primary || '#c084fc',
+      ...CONCENTRIC_CONFIG[3]
     },
     {
-      id: 'listening',
-      title: 'Listen',
-      icon: '🎧',
-      current: listeningMinDone,
-      target: goals.listening_minutes,
-      unit: 'm',
-      color: colors.listening?.dark_primary || '#bf360c'
-    },
-    {
-      id: 'speaking',
-      title: 'Speak',
-      icon: '🎙️',
-      current: speakingMinDone,
-      target: goals.speaking_minutes,
-      unit: 'm',
-      color: colors.speaking?.dark_primary || '#b388ff'
+      id: 'grammar',
+      title: 'Grammar',
+      icon: BookOpen,
+      current: grammarDone,
+      target: goals.grammar || 3,
+      unit: 'p',
+      color: colors.grammar?.primary || colors.grammar?.dark_primary || '#0ea5e9',
+      colorSub: colors.grammar?.light_primary || '#38bdf8',
+      ...CONCENTRIC_CONFIG[4]
     }
   ]);
 
-  // Action Items & Overdue Logic
+  let overallAveragePct = $derived.by(() => {
+    if (!concentricRings.length) return 0;
+    const total = concentricRings.reduce((acc, r) => acc + getPct(r.current, r.target), 0);
+    return Math.round(total / concentricRings.length);
+  });
+
+  let activeRingData = $derived.by(() => {
+    if (!hoveredRingId) return null;
+    const ring = concentricRings.find(r => r.id === hoveredRingId);
+    if (!ring) return null;
+    return {
+      title: ring.title,
+      pct: getPct(ring.current, ring.target),
+      color: ring.color,
+      current: ring.current,
+      target: ring.target,
+      unit: ring.unit
+    };
+  });
+
+  // Schedule Logic
   let scheduledActionItems = $derived.by(() => {
     const items = [];
-    const entries = metadataStore.sortedCalendarEntries;
+    const entries = metadataStore.sortedCalendarEntries || [];
 
-    for (const entry of entries) {
-      if (!entry.due_date) continue;
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const rev = Number(entry.revision ?? 0);
+      const dueDate = entry.due_date;
 
-      if (entry.due_date < todayStr) {
-        const diffDays = Math.max(
-          1,
-          Math.round((new Date(todayStr) - new Date(entry.due_date)) / (1000 * 60 * 60 * 24))
-        );
-        items.push({
-          date: entry.date,
-          revision: entry.revision,
-          status: `${diffDays}d LATE`,
-          isOverdue: true
-        });
-      } else if (entry.due_date === todayStr) {
-        items.push({
-          date: entry.date,
-          revision: entry.revision,
-          status: 'DUE',
-          isOverdue: false
-        });
+      // 1. Initial Pass 0 reviews
+      if (rev < 1) {
+        if (entry.date < todayStr) {
+          const diffDays = Math.max(
+            1,
+            Math.round((new Date(todayStr) - new Date(entry.date)) / (1000 * 60 * 60 * 24))
+          );
+          items.push({
+            date: entry.date,
+            revision: 0,
+            statusLabel: `+${diffDays}d LATE`,
+            urgencyCategory: 'overdue',
+            overdueDays: diffDays,
+            sortWeight: -diffDays
+          });
+        } else if (entry.date === todayStr) {
+          items.push({
+            date: entry.date,
+            revision: 0,
+            statusLabel: 'NEW',
+            urgencyCategory: 'today',
+            overdueDays: 0,
+            sortWeight: 0
+          });
+        }
+        continue;
+      }
+
+      // 2. Regular SRS schedule
+      if (dueDate) {
+        if (dueDate < todayStr) {
+          const diffDays = Math.max(
+            1,
+            Math.round((new Date(todayStr) - new Date(dueDate)) / (1000 * 60 * 60 * 24))
+          );
+          items.push({
+            date: entry.date,
+            revision: rev,
+            statusLabel: `+${diffDays}d LATE`,
+            urgencyCategory: 'overdue',
+            overdueDays: diffDays,
+            sortWeight: -diffDays
+          });
+        } else if (dueDate === todayStr) {
+          items.push({
+            date: entry.date,
+            revision: rev,
+            statusLabel: 'TODAY',
+            urgencyCategory: 'today',
+            overdueDays: 0,
+            sortWeight: 1
+          });
+        } else if (dueDate === tomorrowStr) {
+          items.push({
+            date: entry.date,
+            revision: rev,
+            statusLabel: 'TOMORROW',
+            urgencyCategory: 'tomorrow',
+            overdueDays: 0,
+            sortWeight: 2
+          });
+        }
       }
     }
-    return items;
+
+    return items.sort((a, b) => a.sortWeight - b.sortWeight);
   });
 
   let hasTodayLog = $derived(todayLog !== null);
-  let overdueCount = $derived(scheduledActionItems.filter((i) => i.isOverdue).length);
-  let flashcardColor = $derived(colors.flashcard?.dark_primary || '#f43f5e');
+  let overdueCount = $derived(scheduledActionItems.filter((i) => i.urgencyCategory === 'overdue').length);
+  let flashcardColor = $derived(colors.flashcard?.primary || colors.flashcard?.dark_primary || '#f43f5e');
+  let audioColor = $derived(colors.listening?.primary || colors.listening?.dark_primary || '#f97316');
+  let vocabColor = $derived(colors.vocab?.primary || colors.vocab?.dark_primary || '#10b981');
+
+  function getUrgencyStyles(item) {
+    if (item.urgencyCategory === 'today') {
+      return {
+        pillBg: `color-mix(in srgb, ${vocabColor} 22%, transparent)`,
+        pillBorder: `color-mix(in srgb, ${vocabColor} 55%, transparent)`,
+        pillText: vocabColor,
+        rowBorder: `color-mix(in srgb, ${vocabColor} 30%, transparent)`,
+        rowBg: `color-mix(in srgb, ${vocabColor} 8%, transparent)`,
+        glow: `0 0 20px color-mix(in srgb, ${vocabColor} 25%, transparent)`
+      };
+    }
+    if (item.urgencyCategory === 'tomorrow') {
+      return {
+        pillBg: 'rgba(168, 85, 247, 0.22)',
+        pillBorder: 'rgba(168, 85, 247, 0.5)',
+        pillText: '#d8b4fe',
+        rowBorder: 'rgba(168, 85, 247, 0.28)',
+        rowBg: 'rgba(168, 85, 247, 0.06)',
+        glow: '0 0 20px rgba(168, 85, 247, 0.18)'
+      };
+    }
+    
+    const intensity = Math.min(item.overdueDays, 7);
+    const redAlpha = 0.2 + (intensity * 0.04);
+    const borderAlpha = 0.45 + (intensity * 0.06);
+    return {
+      pillBg: `rgba(244, 63, 94, ${redAlpha})`,
+      pillBorder: `rgba(244, 63, 94, ${borderAlpha})`,
+      pillText: intensity > 3 ? '#ff2a55' : '#fb7185',
+      rowBorder: `rgba(244, 63, 94, ${0.28 + intensity * 0.05})`,
+      rowBg: `rgba(244, 63, 94, ${0.06 + intensity * 0.02})`,
+      glow: `0 0 ${16 + intensity * 3}px rgba(244, 63, 94, ${0.25 + intensity * 0.04})`
+    };
+  }
 </script>
 
-<div class="relative w-full rounded-2xl border border-[var(--border-card)] bg-[var(--bg-surface)] p-4 shadow-xs space-y-5 overflow-hidden select-none">
-  <!-- Status Accent Strip -->
-  <div 
-    class="absolute top-0 left-0 right-0 h-[3px] transition-colors duration-300 {overdueCount > 0 ? 'bg-rose-500' : hasTodayLog ? 'bg-emerald-500' : 'bg-amber-500'}"
-  ></div>
+<div class="relative w-full select-none space-y-5 sm:space-y-6 box-border">
 
-  <!-- Fitness Rings & SRS Stat Grid -->
-  <div class="grid grid-cols-3 gap-2 sm:gap-3">
-    <!-- 1–5: Target-based Habit Rings -->
-    {#each ringItems as ring (ring.id)}
-      {@const pct = getPct(ring.current, ring.target)}
-      {@const offset = getOffset(ring.current, ring.target)}
-
-      <div class="flex flex-col items-center justify-between p-2.5 rounded-xl border border-[var(--border-card)] bg-[var(--bg-base)] transition-all duration-200">
-        <!-- Card Header -->
-        <div class="flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-[var(--text-muted)] truncate max-w-full">
-          <span>{ring.icon}</span>
-          <span class="truncate">{ring.title}</span>
-        </div>
-
-        <!-- SVG Fitness Ring -->
-        <div class="relative w-[70px] h-[70px] my-1.5 flex items-center justify-center">
-          <svg class="w-full h-full -rotate-90 transform" viewBox="0 0 70 70">
-            <!-- Background Inactive Track -->
-            <circle
-              cx="35"
-              cy="35"
-              r={RADIUS}
-              stroke="currentColor"
-              stroke-width="6"
-              fill="none"
-              class="text-[var(--border-card)] opacity-35"
-            />
-            <!-- Animated Progress Ring -->
-            <circle
-              cx="35"
-              cy="35"
-              r={RADIUS}
-              stroke={ring.color}
-              stroke-width="6"
-              stroke-linecap="round"
-              fill="none"
-              stroke-dasharray={CIRCUMFERENCE}
-              stroke-dashoffset={offset}
-              class="transition-[stroke-dashoffset] duration-700 ease-out"
-            />
-          </svg>
-
-          <!-- Centered Data Values -->
-          <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
-            <span class="text-[11px] font-black tracking-tight leading-tight" style="color: {ring.color};">
-              {ring.current}{ring.unit}
-            </span>
-            <span class="text-[9px] font-bold text-[var(--text-muted)] opacity-80 leading-tight">
-              {pct}%
-            </span>
-          </div>
-        </div>
-
-        <!-- Target Label -->
-        <div class="text-[9px] font-semibold text-[var(--text-muted)]">
-          Goal: {ring.target}{ring.unit}
-        </div>
-      </div>
-    {/each}
-
-    <!-- 6: Number-Only Due Cards Counter (No SVG circle) -->
-    <div class="flex flex-col items-center justify-between p-2.5 rounded-xl border border-[var(--border-card)] bg-[var(--bg-base)] transition-all duration-200">
-      <div class="flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-[var(--text-muted)] truncate max-w-full">
-        <span>🀄</span>
-        <span class="truncate">Cards</span>
-      </div>
-
-      <!-- Plain Large Number Badge -->
-      <div class="my-1.5 h-[70px] w-full flex flex-col items-center justify-center">
-        {#if flashcardsDue === 0}
-          <span class="text-2xl font-black text-emerald-500 leading-none">
-            ✓
-          </span>
-          <span class="text-[10px] font-bold font-mono text-emerald-500 mt-1 uppercase tracking-wide">
-            Done
-          </span>
+  <!-- HEADER -->
+  <div class="flex items-center justify-between gap-3 pb-3 sm:pb-4 border-b border-[var(--border-subtle)] relative z-10 flex-wrap sm:flex-nowrap">
+    <div class="flex items-center gap-3 min-w-0">
+      <div class="relative w-10 h-10 rounded-2xl bg-[var(--bg-surface-elevated)] border border-[var(--border-subtle)] flex items-center justify-center shadow-inner overflow-hidden shrink-0">
+        {#if overdueCount > 0}
+          <div class="absolute inset-0 bg-rose-500/20 animate-pulse pointer-events-none"></div>
+          <AlertTriangle size={18} class="text-rose-400 relative z-10 drop-shadow-[0_0_8px_rgba(244,63,94,0.6)]" />
+        {:else if !hasTodayLog}
+          <Clock size={18} class="text-amber-400 relative z-10 drop-shadow-[0_0_8px_rgba(251,191,36,0.6)]" />
         {:else}
-          <span class="text-3xl font-black tracking-tight leading-none font-mono" style="color: {flashcardColor};">
-            {flashcardsDue}
-          </span>
-          <span class="text-[9px] font-bold uppercase tracking-wider text-[var(--text-muted)] mt-1">
-            Due Now
-          </span>
+          <div class="absolute inset-0 pointer-events-none" style="background-color: color-mix(in srgb, {vocabColor} 18%, transparent);"></div>
+          <CheckCircle2 size={18} style="color: {vocabColor};" class="relative z-10 drop-shadow-[0_0_8px_{vocabColor}]" />
         {/if}
       </div>
 
-      <div class="text-[9px] font-semibold text-[var(--text-muted)]">
-        Review Queue
+      <div class="space-y-0.5 min-w-0">
+        <div class="flex items-center gap-1.5">
+          <h2 class="text-xs sm:text-sm font-black tracking-tight uppercase text-[var(--text-primary)] truncate">
+            Today Tasks
+          </h2>
+          <span 
+            class="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+            style="
+              background-color: {hasTodayLog ? vocabColor : '#f59e0b'};
+              box-shadow: 0 0 10px {hasTodayLog ? vocabColor : '#f59e0b'};
+            "
+            class:animate-pulse={!hasTodayLog}
+          ></span>
+        </div>
+        <div class="flex items-center gap-2 text-[10px] font-mono text-[var(--text-muted)]">
+          <span>{todayStr}</span>
+          <span>•</span>
+          <span class="font-bold text-[var(--text-secondary)]">{overallAveragePct}% Completed</span>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- Priority Actions Header -->
-  <div class="pt-1 flex items-center justify-between border-t border-[var(--border-card)]">
-    <div class="flex items-center gap-2">
-      <span class="text-sm">
-        {overdueCount > 0 ? '🚨' : !hasTodayLog ? '📝' : '⚡'}
-      </span>
-      <span class="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)]">
-        Today's Priority Actions
-      </span>
-    </div>
-
-    <div class="flex items-center gap-1.5">
+    <!-- Status Badges -->
+    <div class="flex items-center gap-2 shrink-0">
       {#if !hasTodayLog}
-        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-500 border border-amber-500/30">
+        <span class="inline-flex items-center gap-1.5 text-[10px] font-mono font-bold px-2.5 sm:px-3 py-1 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/35 shadow-[0_0_14px_rgba(245,158,11,0.25)]">
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
           Pending
         </span>
+      {:else}
+        <span 
+          class="inline-flex items-center gap-1.5 text-[10px] font-mono font-bold px-2.5 sm:px-3 py-1 rounded-full border shadow-xs"
+          style="
+            background-color: color-mix(in srgb, {vocabColor} 16%, transparent);
+            border-color: color-mix(in srgb, {vocabColor} 40%, transparent);
+            color: {vocabColor};
+            box-shadow: 0 0 14px color-mix(in srgb, {vocabColor} 30%, transparent);
+          "
+        >
+          <span class="w-1.5 h-1.5 rounded-full" style="background-color: {vocabColor}; box-shadow: 0 0 8px {vocabColor};"></span>
+          Logged
+        </span>
       {/if}
+
       {#if overdueCount > 0}
-        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-500/15 text-rose-500 border border-rose-500/30">
+        <span class="inline-flex items-center gap-1.5 text-[10px] font-mono font-bold px-2.5 sm:px-3 py-1 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/40 shadow-[0_0_16px_rgba(244,63,94,0.35)] animate-pulse">
+          <span class="w-1.5 h-1.5 rounded-full bg-rose-400 shadow-[0_0_6px_#f43f5e]"></span>
           {overdueCount} Late
         </span>
       {/if}
     </div>
   </div>
 
-  <!-- Action Track Items -->
-  <div class="space-y-2">
-    {#if !hasTodayLog}
-      <button
-        onclick={() => onSelectDate(todayStr)}
-        class="w-full flex items-center justify-between p-3 rounded-xl border border-amber-500/40 bg-amber-500/5 transition-transform duration-75 active:scale-[0.98] text-left cursor-pointer"
+  <!-- CONCENTRIC RINGS + FULL-WIDTH EXPANDED BARS -->
+  <div class="flex flex-col 2xl:flex-row gap-5 sm:gap-6 items-center w-full relative z-10 box-border">
+    
+    <!-- Concentric Multi-Ring Hero -->
+    <div class="shrink-0 flex items-center justify-center">
+      <div class="relative w-44 h-44 sm:w-52 sm:h-52 flex items-center justify-center p-2 bg-[var(--bg-base)]/60 rounded-3xl border border-[var(--border-subtle)] shadow-inner group shrink-0">
+        
+        <!-- Ambient Radial Core Glow -->
+        <div 
+          class="absolute inset-4 rounded-full blur-md pointer-events-none transition-colors duration-300"
+          style="background: radial-gradient(circle, color-mix(in srgb, {activeRingData ? activeRingData.color : themeColor} 20%, transparent) 0%, transparent 70%);"
+        ></div>
+
+        <svg class="w-full h-full -rotate-90 transform drop-shadow-md overflow-visible" viewBox="0 0 200 200">
+          <defs>
+            {#each concentricRings as ring (ring.id)}
+              <filter id="glow-{ring.id}" x="-30%" y="-30%" width="160%" height="160%">
+                <feGaussianBlur stdDeviation="2.5" result="blur" />
+                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+              </filter>
+            {/each}
+          </defs>
+
+          {#each concentricRings as ring (ring.id)}
+            {@const circ = 2 * Math.PI * ring.radius}
+            {@const offset = circ * (1 - Math.min(Math.max(ring.current / ring.target, 0), 1))}
+            {@const isDimmed = hoveredRingId !== null && hoveredRingId !== ring.id}
+            {@const isFocused = hoveredRingId === ring.id}
+
+            <!-- Background Track -->
+            <circle
+              cx="100"
+              cy="100"
+              r={ring.radius}
+              stroke="currentColor"
+              stroke-width={ring.stroke}
+              fill="none"
+              class="text-[var(--border-subtle)] transition-opacity duration-200 cursor-pointer pointer-events-auto {isDimmed ? 'opacity-10' : 'opacity-25'}"
+              role="presentation"
+              onmouseenter={() => (hoveredRingId = ring.id)}
+              onmouseleave={() => (hoveredRingId = null)}
+            />
+
+            <!-- Active Glowing Ring -->
+            <circle
+              cx="100"
+              cy="100"
+              r={ring.radius}
+              stroke={ring.color}
+              stroke-width={isFocused ? ring.stroke + 2 : ring.stroke}
+              stroke-linecap="round"
+              fill="none"
+              stroke-dasharray={circ}
+              stroke-dashoffset={offset}
+              filter={isFocused ? `url(#glow-${ring.id})` : undefined}
+              class="transition-all duration-300 ease-out cursor-pointer pointer-events-auto {isDimmed ? 'opacity-20' : 'opacity-100'}"
+              style="filter: drop-shadow(0 0 {isFocused ? '12px' : '4px'} {ring.color});"
+              role="presentation"
+              onmouseenter={() => (hoveredRingId = ring.id)}
+              onmouseleave={() => (hoveredRingId = null)}
+            />
+          {/each}
+        </svg>
+
+        <!-- Dynamic Reactive Center Counter -->
+        <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
+          {#if activeRingData}
+            <span class="text-2xl sm:text-3xl font-black font-mono tracking-tight leading-none animate-in fade-in zoom-in-95 duration-150" style="color: {activeRingData.color};">
+              {activeRingData.pct}<span class="text-xs font-bold ml-0.5 opacity-80">%</span>
+            </span>
+            <span class="text-[9px] font-mono uppercase tracking-widest text-[var(--text-secondary)] mt-1 font-bold truncate max-w-[85px]">
+              {activeRingData.title}
+            </span>
+          {:else}
+            <span class="text-2xl sm:text-3xl font-black font-mono tracking-tight leading-none text-[var(--text-primary)]">
+              {overallAveragePct}<span class="text-xs font-bold ml-0.5" style="color: {themeColor};">%</span>
+            </span>
+            <span class="text-[9px] font-mono uppercase tracking-widest text-[var(--text-muted)] mt-1 font-bold">
+              Goals
+            </span>
+          {/if}
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Side: Habit Tracks (Localized Bleed Around Hovered Track) -->
+    <div class="flex-1 w-full min-w-0 flex flex-col gap-2 sm:gap-2.5 box-border">
+      {#each concentricRings as ring (ring.id)}
+        {@const pct = getPct(ring.current, ring.target)}
+        {@const IconComp = ring.icon}
+        {@const isHovered = hoveredRingId === ring.id}
+
+        <div class="relative w-full">
+          <!-- Uncropped ambient bleed aura centered on hovered row -->
+          <div 
+            class="pointer-events-none absolute -inset-x-6 -inset-y-4 rounded-3xl blur-2xl opacity-0 transition-opacity duration-300 -z-10"
+            style="
+              background: radial-gradient(ellipse at center, {ring.color} 0%, transparent 75%);
+              opacity: {isHovered ? 0.38 : 0};
+            "
+          ></div>
+
+          <div 
+            role="presentation"
+            title={ring.title}
+            onmouseenter={() => (hoveredRingId = ring.id)}
+            onmouseleave={() => (hoveredRingId = null)}
+            class="group relative flex items-center justify-between gap-3 sm:gap-4 px-3 sm:px-4 py-2 sm:py-2.5 rounded-2xl border transition-all duration-200 w-full min-w-0 box-border cursor-default {isHovered 
+              ? 'bg-[var(--bg-surface-elevated)] border-[var(--border-hover)] shadow-sm -translate-y-0.5' 
+              : 'bg-[var(--bg-base)]/80 border-[var(--border-subtle)] hover:bg-[var(--bg-surface-elevated)]'}"
+          >
+            <div 
+              class="absolute left-0 top-2 bottom-2 w-1 rounded-r-full transition-all duration-200"
+              style="background-color: {isHovered ? ring.color : 'transparent'}; box-shadow: {isHovered ? `0 0 12px ${ring.color}` : 'none'};"
+            ></div>
+
+            <div 
+              class="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border transition-transform duration-200 {isHovered ? 'scale-110 shadow-sm' : ''}"
+              style="
+                background-color: color-mix(in srgb, {ring.color} 18%, transparent);
+                border-color: color-mix(in srgb, {ring.color} 38%, transparent);
+                color: {ring.color};
+                box-shadow: {isHovered ? `0 0 14px color-mix(in srgb, ${ring.color} 35%, transparent)` : 'none'};
+              "
+            >
+              <IconComp size={15} strokeWidth={2.5} />
+            </div>
+
+            <div class="flex-1 min-w-[60px] h-2.5 sm:h-3 rounded-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] overflow-hidden p-[1px] relative">
+              <div 
+                class="h-full rounded-full transition-all duration-500 relative"
+                style="
+                  width: {pct}%; 
+                  background: linear-gradient(90deg, {ring.color}, {ring.colorSub});
+                  box-shadow: 0 0 {isHovered ? '16px' : '9px'} {ring.color}90;
+                "
+              >
+                {#if pct > 0}
+                  <div class="absolute right-0 top-0 bottom-0 w-2 bg-white/90 rounded-full shadow-[0_0_8px_#fff]"></div>
+                {/if}
+              </div>
+            </div>
+
+            <div class="text-right font-mono text-xs sm:text-sm shrink-0 min-w-[60px]">
+              <span class="font-black" style="color: {ring.color};">{ring.current}{ring.unit}</span>
+              <span class="text-[var(--text-muted)] font-medium">/{ring.target}{ring.unit}</span>
+            </div>
+
+          </div>
+        </div>
+      {/each}
+    </div>
+
+  </div>
+
+  <!-- DUAL SRS REVIEW QUEUE BANNER -->
+  <div class="relative flex items-center justify-between p-3.5 sm:p-4 rounded-2xl border border-[var(--border-card)] bg-[var(--bg-surface-elevated)]/60 shadow-xs backdrop-blur-xs overflow-hidden group box-border">
+    
+    <div 
+      class="absolute left-0 top-0 bottom-0 w-1 opacity-80 group-hover:opacity-100 transition-opacity"
+      style="background-color: {flashcardColor}; box-shadow: 0 0 14px {flashcardColor};"
+    ></div>
+
+    <div class="flex items-center gap-3 sm:gap-3.5 pl-1.5 min-w-0">
+      <div 
+        class="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl flex items-center justify-center border shadow-xs transition-transform duration-200 group-hover:scale-105 shrink-0"
+        style="
+          background-color: color-mix(in srgb, {flashcardColor} 16%, transparent);
+          border-color: color-mix(in srgb, {flashcardColor} 35%, transparent);
+          color: {flashcardColor};
+          box-shadow: 0 0 12px color-mix(in srgb, {flashcardColor} 20%, transparent);
+        "
       >
-        <div class="flex items-center gap-2.5">
-          <span class="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-500 border border-amber-500/30 uppercase">
-            CREATE
+        <Flame size={18} strokeWidth={2.5} class="group-hover:animate-bounce" />
+      </div>
+
+      <div class="space-y-0.5 min-w-0">
+        <span class="text-xs font-bold text-[var(--text-primary)] block truncate">
+          SRS Queue Status
+        </span>
+        <span class="text-[10px] font-mono text-[var(--text-muted)] block truncate">
+          Scheduled recognition and ear training
+        </span>
+      </div>
+    </div>
+
+    <!-- Dual Due Metrics -->
+    <div class="flex items-center gap-2 sm:gap-3 shrink-0 ml-2">
+      {#if srsCounts.totalDue === 0}
+        <div 
+          class="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-full border text-[10px] font-mono font-bold uppercase tracking-wider shadow-xs"
+          style="
+            background-color: color-mix(in srgb, {vocabColor} 14%, transparent);
+            border-color: color-mix(in srgb, {vocabColor} 35%, transparent);
+            color: {vocabColor};
+            box-shadow: 0 0 12px color-mix(in srgb, {vocabColor} 20%, transparent);
+          "
+        >
+          <CheckCircle2 size={12} />
+          <span>Queue Clear</span>
+        </div>
+      {:else}
+        <!-- Visual SRS Count -->
+        <div 
+          class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl border shadow-2xs"
+          style="
+            background-color: color-mix(in srgb, {flashcardColor} 12%, transparent);
+            border-color: color-mix(in srgb, {flashcardColor} 30%, transparent);
+          "
+          title="Visual Flashcards Due"
+        >
+          <Eye size={12} style="color: {flashcardColor};" />
+          <span class="text-xs sm:text-sm font-mono font-black" style="color: {flashcardColor};">
+            {srsCounts.visualDue}
           </span>
-          <span class="text-xs font-semibold text-[var(--text-primary)]">
-            Create Today's Log ({todayStr})
+          <span class="text-[9px] font-mono font-bold uppercase text-[var(--text-muted)] hidden sm:inline">
+            vis
           </span>
         </div>
-        <span class="text-xs font-bold text-amber-500">+ Open</span>
-      </button>
+
+        <!-- Audio SRS Count -->
+        <div 
+          class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl border shadow-2xs"
+          style="
+            background-color: color-mix(in srgb, {audioColor} 12%, transparent);
+            border-color: color-mix(in srgb, {audioColor} 30%, transparent);
+          "
+          title="Tone Hearing Audio Due"
+        >
+          <Headphones size={12} style="color: {audioColor};" />
+          <span class="text-xs sm:text-sm font-mono font-black" style="color: {audioColor};">
+            {srsCounts.audioDue}
+          </span>
+          <span class="text-[9px] font-mono font-bold uppercase text-[var(--text-muted)] hidden sm:inline">
+            ear
+          </span>
+        </div>
+      {/if}
+    </div>
+  </div>
+
+  <!-- MONOSPACE SCHEDULED QUEUE (Natural Edge Bleeds) -->
+  <div class="pt-2 border-t border-[var(--border-subtle)] space-y-2 box-border relative">
+    <div class="flex items-center justify-between px-1 mb-1">
+      <span class="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+        Scheduled Queue
+      </span>
+      <span class="text-[10px] font-mono text-[var(--text-muted)]">
+        {scheduledActionItems.length + (!hasTodayLog ? 1 : 0)} actions
+      </span>
+    </div>
+
+    <!-- Initialize Today Action Card -->
+    {#if !hasTodayLog}
+      <div class="relative w-full">
+        <!-- Natural uncropped halo for Start action -->
+        <div 
+          class="pointer-events-none absolute -inset-x-4 -inset-y-2 rounded-2xl blur-xl opacity-30 -z-10"
+          style="background: radial-gradient(ellipse at center, rgba(245, 158, 11, 0.4) 0%, transparent 75%);"
+        ></div>
+
+        <button
+          type="button"
+          onclick={() => onSelectDate(todayStr)}
+          class="group w-full flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border border-amber-500/40 bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-transparent hover:border-amber-500/70 transition-all duration-150 active:scale-[0.99] text-left cursor-pointer shadow-xs hover:shadow-[0_0_24px_rgba(245,158,11,0.25)] relative"
+        >
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="w-[76px] sm:w-[84px] shrink-0 text-center">
+              <span class="block w-full text-[9px] sm:text-[10px] font-black font-mono px-2 py-0.5 rounded-md bg-amber-500/25 text-amber-300 border border-amber-500/40 uppercase tracking-wider shadow-xs">
+                START
+              </span>
+            </div>
+
+            <div class="flex items-center gap-2 truncate">
+              <Calendar size={13} class="text-amber-400 shrink-0" />
+              <span class="font-mono text-xs sm:text-sm font-bold text-[var(--text-primary)] group-hover:text-amber-400 transition-colors">
+                {todayStr}
+              </span>
+              <span class="text-[11px] text-[var(--text-muted)] truncate hidden sm:inline">
+                Initialize today's session
+              </span>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-1.5 text-xs font-mono font-bold text-amber-400 group-hover:translate-x-1 transition-transform shrink-0 ml-2">
+            <span class="hidden sm:inline">Open</span>
+            <ArrowRight size={14} />
+          </div>
+        </button>
+      </div>
     {/if}
 
+    <!-- Scheduled Action Items -->
     {#each scheduledActionItems as item (item.date)}
-      <button
-        onclick={() => onSelectDate(item.date)}
-        class="w-full flex items-center justify-between p-3 rounded-xl border border-[var(--border-card)] bg-[var(--bg-base)] transition-transform duration-75 active:scale-[0.98] text-left cursor-pointer {item.isOverdue ? 'border-rose-500/40 bg-rose-500/5' : ''}"
-      >
-        <div class="flex items-center gap-2.5 truncate">
-          <span 
-            class="text-[10px] font-extrabold px-1.5 py-0.5 rounded uppercase flex-shrink-0 {item.isOverdue ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-sky-500/20 text-sky-400 border border-sky-500/30'}"
-          >
-            {item.status}
-          </span>
-          <span class="text-xs font-semibold text-[var(--text-primary)] truncate">
-            {item.date}
-          </span>
-        </div>
+      {@const styles = getUrgencyStyles(item)}
+      <div class="relative w-full">
+        <!-- Natural uncropped halo bleeding around queue cards -->
+        <div 
+          class="pointer-events-none absolute -inset-x-4 -inset-y-2 rounded-2xl blur-xl opacity-35 transition-opacity duration-200 -z-10"
+          style="background: radial-gradient(ellipse at center, {styles.pillText} 0%, transparent 75%);"
+        ></div>
 
-        <div class="text-[11px] font-medium text-[var(--text-muted)] flex-shrink-0 ml-2">
-          Rev {item.revision}
-        </div>
-      </button>
+        <button
+          type="button"
+          onclick={() => onSelectDate(item.date)}
+          class="group w-full flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border transition-all duration-150 active:scale-[0.99] text-left cursor-pointer shadow-xs hover:scale-[1.005] relative"
+          style="
+            border-color: {styles.rowBorder};
+            background-color: {styles.rowBg};
+            box-shadow: {styles.glow};
+          "
+        >
+          <div class="flex items-center gap-3 min-w-0 flex-1">
+            <div class="w-[76px] sm:w-[84px] shrink-0 text-center">
+              <span 
+                class="block w-full text-[9px] sm:text-[10px] font-black font-mono px-1.5 py-0.5 rounded-md uppercase tracking-wider border truncate shadow-xs"
+                style="
+                  background-color: {styles.pillBg};
+                  border-color: {styles.pillBorder};
+                  color: {styles.pillText};
+                "
+              >
+                {item.statusLabel}
+              </span>
+            </div>
+
+            <div class="flex items-center gap-2 min-w-0 truncate">
+              <Calendar size={13} class="text-[var(--text-muted)] shrink-0 group-hover:text-[var(--text-primary)] transition-colors" />
+              <span class="font-mono text-xs sm:text-sm font-bold text-[var(--text-primary)] tracking-wide truncate">
+                {item.date}
+              </span>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 shrink-0 ml-2">
+            <span class="w-[60px] sm:w-[68px] text-center text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] shadow-2xs">
+              REV {item.revision}
+            </span>
+            <ArrowRight size={13} class="text-[var(--text-muted)] group-hover:text-[var(--text-primary)] group-hover:translate-x-1 transition-transform" />
+          </div>
+        </button>
+      </div>
     {/each}
 
     {#if hasTodayLog && scheduledActionItems.length === 0}
-      <div class="py-3 text-center text-xs text-[var(--text-muted)] italic">
-        ✨ All caught up for today!
+      <div class="py-3 text-center text-xs text-[var(--text-muted)] flex items-center justify-center gap-2 font-medium">
+        <Sparkles size={14} style="color: {vocabColor};" />
+        <span>All sessions reviewed and targets up to date for today</span>
       </div>
     {/if}
   </div>
+
 </div>

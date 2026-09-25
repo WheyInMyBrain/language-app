@@ -1,12 +1,7 @@
 // frontend/src/lib/media.js
-import { CONFIG } from './config.js';
 
 /**
- * Extracts pure YouTube 11-character video ID from any format:
- * - https://www.youtube.com/watch?v=dQw4w9WgXcQ
- * - https://youtu.be/dQw4w9WgXcQ?si=abcdef
- * - https://www.youtube.com/shorts/dQw4w9WgXcQ
- * - https://m.youtube.com/watch?v=dQw4w9WgXcQ&feature=shared
+ * Extracts pure YouTube 11-character video ID from any format
  */
 export function extractYouTubeId(url) {
   if (!url || typeof url !== 'string') return null;
@@ -18,10 +13,6 @@ export function extractYouTubeId(url) {
 
 /**
  * Strips tracking parameters, playlists, and referral junk.
- * - Converts any YouTube link into a clean canonical: `https://www.youtube.com/watch?v={ID}`
- * - Preserves optional timestamp `t=...` if present
- * - Leaves direct video/image URLs intact
- * - Returns null or empty string if input is invalid/garbage
  */
 export function canonicalizeMediaUrl(rawInput) {
   if (!rawInput || typeof rawInput !== 'string') return '';
@@ -33,7 +24,6 @@ export function canonicalizeMediaUrl(rawInput) {
   // 2. Canonicalize YouTube
   const ytId = extractYouTubeId(clean);
   if (ytId) {
-    // Preserve timestamp if specified (?t=120 or &t=2m10s)
     const timeMatch = clean.match(/[?&]t=([0-9hms]+)/i);
     if (timeMatch) {
       return `https://www.youtube.com/watch?v=${ytId}&t=${timeMatch[1]}`;
@@ -52,7 +42,6 @@ export function canonicalizeMediaUrl(rawInput) {
 
 /**
  * Resolves cleaned URL into a renderable component payload
- * Only produces: 'youtube' | 'direct_video' | 'image' | 'empty'
  */
 export function getMediaInfo(rawUrl) {
   if (!rawUrl || typeof rawUrl !== 'string') {
@@ -83,8 +72,8 @@ export function getMediaInfo(rawUrl) {
     };
   }
 
-  // 3. Local media files (relative paths served by Axum backend)
-  const resolvedUrl = `${CONFIG.API_BASE}/media/${encodeURIComponent(clean)}`;
+  // 3. Local media files (served via Vite /media proxy)
+  const resolvedUrl = `/media/${encodeURIComponent(clean)}`;
   const isVideo = /\.(mp4|webm|mov|m4v)(?:\?.*)?$/i.test(clean);
 
   return {

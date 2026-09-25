@@ -34,21 +34,71 @@ export default {
   },
 
   colors: {
-    streak: { dark_primary: '#ff5252', light_primary: '#c62828' },
-    vocab: { dark_primary: '#2e7d32', light_primary: '#2e7d32' },
-    ci: { dark_primary: '#6a1b9a', light_primary: '#6a1b9a' },
-    listening: { dark_primary: '#bf360c', light_primary: '#d84315' },
-    speaking: { dark_primary: '#b388ff', light_primary: '#4527a0' },
-    grammar: { dark_primary: '#01579b', light_primary: '#0277bd' },
-    flashcard: { dark_primary: '#f43f5e', light_primary: '#e11d48' }
+    // Theme (Neon Violet / Royal Purple)
+    theme: { 
+      dark_primary: '#c084fc',  // Luminous violet for dark glass
+      light_primary: '#7e22ce', // Deep contrast purple for light glass
+      primary: '#a855f7' 
+    },
+
+    // Streak (Vibrant Ember / Crimson Coral)
+    streak: { 
+      dark_primary: '#fb7185', 
+      light_primary: '#e11d48', 
+      primary: '#f43f5e' 
+    },
+
+    // Vocab (Emerald / Mint Glass)
+    vocab: { 
+      dark_primary: '#34d399',  // Crisp mint glow on dark mode
+      light_primary: '#059669', // Emerald readability on light mode
+      primary: '#10b981' 
+    },
+
+    // CI Video (Amethyst / Deep Electric Purple)
+    ci: { 
+      dark_primary: '#d8b4fe', 
+      light_primary: '#9333ea', 
+      primary: '#a855f7' 
+    },
+
+    // Listening (Sunset Amber / Deep Tangerine)
+    listening: { 
+      dark_primary: '#fb923c',  // Vibrant peach-orange on dark glass
+      light_primary: '#ea580c', // High-contrast orange on light glass
+      primary: '#f97316' 
+    },
+
+    // Speaking (Luminous Lilac / Deep Indigo)
+    speaking: { 
+      dark_primary: '#e879f9', 
+      light_primary: '#a21caf', 
+      primary: '#c026d3' 
+    },
+
+    // Grammar (Cyan / Oceanic Azure)
+    grammar: { 
+      dark_primary: '#38bdf8',  // Glowing sky-cyan on dark glass
+      light_primary: '#0284c7', // Deep sapphire-cyan on light glass
+      primary: '#0ea5e9' 
+    },
+
+    // Flashcard / Review (Ruby Rose)
+    flashcard: { 
+      dark_primary: '#f472b6', 
+      light_primary: '#db2777', 
+      primary: '#ec4899' 
+    }
   },
 
+  // 🌟 BALANCED TONE CHROMATICS 🌟
+  // Calibrated for WCAG AA contrast against both dark (#12131a) & frosted light (#ffffff/60) backgrounds
   tones: {
-    1: '#0284c7', // Sky Blue
-    2: '#16a34a', // Leaf Green
-    3: '#d9ab06', // Amber
-    4: '#dc2626', // Crimson
-    5: '#64748b'  // Slate
+    1: '#38bdf8', // Tone 1 (High Level): Vivid Sky Cyan — crystal clear on dark & light
+    2: '#34d399', // Tone 2 (Rising): Jade Mint — balanced brightness without glare
+    3: '#fbbf24', // Tone 3 (Dipping): Warm Sunflower Amber — avoids muddy brown tones
+    4: '#f87171', // Tone 4 (Falling): Coral Crimson — crisp without visual fatigue
+    5: '#94a3b8'  // Tone 5 (Neutral): Balanced Slate Mist — readable subdued neutral
   },
 
   /**

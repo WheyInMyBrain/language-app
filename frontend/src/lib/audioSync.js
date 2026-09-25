@@ -1,5 +1,4 @@
 // frontend/src/lib/audioSync.js
-import { CONFIG } from './config.js';
 import { uploadProgressStore } from './stores/uploadProgress.svelte.js';
 
 const DB_NAME = 'lang_app_audio_vault';
@@ -21,7 +20,7 @@ function openAudioDb() {
 
 export function getAudioStaticUrl(lang, date, category, index) {
   const cleanIndex = String(index).replace('.webm', '');
-  return `${CONFIG.AUDIO_BASE}/${lang}/${date}/${category}/${cleanIndex}.webm`;
+  return `/audio/${lang}/${date}/${category}/${cleanIndex}.webm`;
 }
 
 export async function resolveAudioSource(lang, date, category, index, hasDuration) {
@@ -82,12 +81,12 @@ export async function saveAudioRecord({ lang, date, category, index, blob, durat
 }
 
 /**
- * Uploads via XHR to obtain actual upload progress events
+ * Uploads via XHR using Vite's relative proxy (/api/audio/...)
  */
 function uploadSingleRecord(item, db) {
   if (!navigator.onLine) return Promise.resolve(false);
 
-  const uploadUrl = `${CONFIG.API_BASE}/api/audio/${item.lang}/${item.date}/${item.category}/${item.index}`;
+  const uploadUrl = `/api/audio/${item.lang}/${item.date}/${item.category}/${item.index}`;
 
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
@@ -143,7 +142,6 @@ export async function syncPendingAudios() {
       req.onerror = () => resolve([]);
     });
 
-    // Process sequentially to prevent network saturation on mobile connections
     for (const item of pendingItems) {
       await uploadSingleRecord(item, db);
     }

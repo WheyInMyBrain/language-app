@@ -14,8 +14,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'logo-192.png'],
       manifest: {
-        name: 'Language Vault',
-        short_name: 'LangVault',
+        name: 'Log Language',
+        short_name: 'LogLang',
         description: 'Local-first language acquisition engine',
         theme_color: '#090d16',
         background_color: '#090d16',
