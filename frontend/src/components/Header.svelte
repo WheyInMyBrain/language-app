@@ -7,76 +7,38 @@
   import { uploadProgressStore } from '../lib/stores/uploadProgress.svelte.js';
   import { refreshPendingAudioCount, syncPendingAudios } from '../lib/audioSync.js';
 
-  // Razor-sharp vector icons
+  import Mascot from './Mascot.svelte';
+
   import { 
-    ChevronDown, 
     ArrowLeft, 
     Flame, 
-    Check, 
-    Sparkles, 
-    Globe,
-    Layers,
     CloudUpload,
     RotateCw
   } from '@lucide/svelte';
 
   let { handleBack, activeRoute = 'dashboard' } = $props();
 
-  // Telemetry & active states
   let status = $derived(metadataStore.connectionStatus);
   let activeLangCode = $derived(metadataStore.activeLanguage);
   let activeLangConfig = $derived(activeLanguage.current);
-  let langList = $derived(Object.values(metadataStore.languages || {}));
-
-  // Clean Theme Accent Color: Reads from activeLanguage.themeColor, falls back to vibrant purple
   let themeColor = $derived(activeLanguage.themeColor || '#a855f7');
 
-  // SRS Due counter
   let totalDue = $derived.by(() => {
     if (!srsStore.getDueCounts) return 0;
     const counts = srsStore.getDueCounts();
     return (counts.audio || 0) + (counts.visual || 0);
   });
 
-  // Streak
   let streak = $derived(activeLangConfig?.current_streak || 0);
 
-  // Audio Upload Telemetry
   let pendingAudios = $derived(uploadProgressStore.pendingCount);
   let isUploading = $derived(uploadProgressStore.isUploading);
   let uploadProgress = $derived(uploadProgressStore.progress);
-
-  // Instant Native Popover State (Zero lag, zero portals)
-  let isLangMenuOpen = $state(false);
-
-  function toggleMenu(e) {
-    e.stopPropagation();
-    isLangMenuOpen = !isLangMenuOpen;
-  }
-
-  function selectLanguage(code) {
-    metadataStore.activeLanguage = code;
-    isLangMenuOpen = false;
-  }
-
-  function handleWindowClick(e) {
-    if (!e.target.closest('#lang-dropdown-wrapper')) {
-      isLangMenuOpen = false;
-    }
-  }
-
-  function handleWindowKeydown(e) {
-    if (e.key === 'Escape') {
-      isLangMenuOpen = false;
-    }
-  }
 
   onMount(() => {
     refreshPendingAudioCount();
   });
 </script>
-
-<svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
 
 <header 
   class="safe-top w-full sticky top-0 z-50 px-3 sm:px-6 py-2.5 border-b border-[var(--border-subtle)] transition-colors duration-500 backdrop-blur-2xl"
@@ -89,162 +51,52 @@
 >
   <div class="max-w-[1720px] mx-auto flex items-center justify-between gap-3 relative z-10">
     
-    <!-- LEFT: Identity, Navigation & Instant Language Switcher -->
+    <!-- LEFT: Back Button + Clean Kaomoji Mascot -->
     <div class="flex items-center gap-2.5 sm:gap-4">
-      
-      <!-- Smart Back Button: Only illuminates when drilled into sub-views -->
       {#if activeRoute !== 'dashboard' && activeRoute !== 'select-language'}
         <button
           type="button"
           onclick={handleBack}
           aria-label="Go Back"
-          class="flex items-center justify-center w-8 h-8 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-card)] hover:border-[var(--border-hover)] hover:bg-[var(--bg-surface-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all duration-150 active:scale-90 cursor-pointer shadow-xs"
+          class="flex items-center justify-center w-8 h-8 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-card)] hover:border-[var(--border-hover)] hover:bg-[var(--bg-surface-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all duration-150 active:scale-90 cursor-pointer shadow-xs shrink-0"
         >
           <ArrowLeft size={14} strokeWidth={2.5} />
         </button>
       {/if}
 
-      <!-- Brand Mark: LOGLANG with Soft Backlit Glow -->
-      <div class="flex items-center gap-2.5 group cursor-default">
-        <div 
-          class="relative flex items-center justify-center w-8 h-8 rounded-xl border shadow-xs transition-all duration-300 group-hover:scale-105"
-          style="
-            background: radial-gradient(circle at 35% 35%, {themeColor}30, transparent 100%), var(--bg-surface);
-            border-color: {themeColor}50;
-            box-shadow: 0 0 16px {themeColor}25;
-          "
-        >
-          <Sparkles size={15} style="color: {themeColor};" class="transition-transform group-hover:rotate-12 duration-300" />
-        </div>
-
-        <div class="hidden sm:flex flex-col leading-none">
-          <div class="flex items-center gap-1.5">
-            <span class="text-sm font-black tracking-tight text-[var(--text-primary)]">
-              LOG<span style="color: {themeColor};" class="font-mono font-bold transition-colors duration-500">LANG</span>
-            </span>
-            <span 
-              class="text-[8px] font-mono font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border"
-              style="background-color: {themeColor}12; color: {themeColor}; border-color: {themeColor}30;"
-            >
-              STUDIO
-            </span>
-          </div>
-          <span class="text-[9px] font-mono tracking-widest text-[var(--text-muted)] uppercase mt-0.5">
-            Language Cockpit
-          </span>
-        </div>
-      </div>
-
-      <!-- Divider -->
-      <div class="hidden sm:block w-px h-5 bg-[var(--border-subtle)]"></div>
-
-      <!-- Instant Native Language Selector (100% Reliable, 0ms latency) -->
-      {#if activeLangCode}
-        <div id="lang-dropdown-wrapper" class="relative">
-          <button
-            type="button"
-            onclick={toggleMenu}
-            class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[var(--bg-surface)]/90 hover:bg-[var(--bg-surface-elevated)] border transition-all duration-150 cursor-pointer shadow-xs active:scale-[0.98] outline-none"
-            style="border-color: {isLangMenuOpen ? themeColor : 'var(--border-card)'}; box-shadow: {isLangMenuOpen ? `0 0 14px ${themeColor}30` : `0 0 8px ${themeColor}10`};"
-          >
-            <!-- Breathing Theme Dot -->
-            <span 
-              class="w-2 h-2 rounded-full transition-colors duration-500 shrink-0"
-              style="background-color: {themeColor}; box-shadow: 0 0 8px {themeColor};"
-            ></span>
-
-            <span class="text-xs font-bold text-[var(--text-primary)] tracking-tight">
-              {activeLangConfig?.name || activeLangCode}
-            </span>
-
-            <span class="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-[var(--badge-bg)] text-[var(--text-muted)] border border-[var(--border-subtle)]">
-              {activeLangCode}
-            </span>
-
-            <ChevronDown 
-              size={12} 
-              class="text-[var(--text-muted)] transition-transform duration-200 {isLangMenuOpen ? 'rotate-180' : ''}" 
-            />
-          </button>
-
-          <!-- Native Floating Popover Menu -->
-          {#if isLangMenuOpen}
-            <div 
-              class="absolute left-0 mt-2 w-60 rounded-2xl border shadow-2xl p-1.5 z-50 backdrop-blur-2xl animate-in fade-in zoom-in-95 duration-100"
-              style="
-                background-color: color-mix(in srgb, var(--bg-surface) 92%, {themeColor} 8%);
-                border-color: color-mix(in srgb, {themeColor} 40%, var(--border-card));
-                box-shadow: 0 16px 36px -8px rgba(0,0,0,0.5), 0 0 24px {themeColor}20;
-              "
-            >
-              <div class="px-2.5 py-1.5 text-[10px] font-bold font-mono uppercase tracking-wider text-[var(--text-muted)] border-b border-[var(--border-subtle)] mb-1 flex items-center justify-between">
-                <span>Active Targets</span>
-                <span class="text-[9px] font-normal" style="color: {themeColor};">{langList.length} languages</span>
-              </div>
-              
-              <div class="space-y-0.5 max-h-64 overflow-y-auto">
-                {#each langList as lang (lang.code)}
-                  {@const isSelected = lang.code === activeLangCode}
-                  <button
-                    type="button"
-                    onclick={() => selectLanguage(lang.code)}
-                    class="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer outline-none {isSelected 
-                      ? 'text-[var(--text-primary)] font-bold' 
-                      : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-elevated)]'}"
-                    style={isSelected ? `background-color: ${themeColor}20; border: 1px solid ${themeColor}40;` : ''}
-                  >
-                    <div class="flex items-center gap-2">
-                      {#if isSelected}
-                        <Check size={13} style="color: {themeColor};" strokeWidth={3} />
-                      {:else}
-                        <span class="w-3.5"></span>
-                      {/if}
-                      <span>{lang.name}</span>
-                    </div>
-
-                    <span class="font-mono text-[10px] uppercase text-[var(--text-muted)]">
-                      {lang.code}
-                    </span>
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-        </div>
-      {/if}
-
+      <!-- Clean Dynamic Mascot Component -->
+      <Mascot {activeRoute} />
     </div>
 
-    <!-- RIGHT: Telemetry Indicators, Pulse Streaks & Sync Status -->
+    <!-- RIGHT: Audio Queue, Streak, SRS Due, and Yjs Telemetry -->
     <div class="flex items-center gap-2 sm:gap-2.5">
 
-      <!-- 🌟 OFFLINE AUDIO OUTBOX & LIVE PROGRESS CAPSULE 🌟 -->
+      <!-- Audio Outbox Sync Capsule -->
       {#if pendingAudios > 0 || isUploading}
         <button
           type="button"
           onclick={() => syncPendingAudios()}
           title="{pendingAudios} recording(s) pending. Click to force sync."
-          class="relative flex flex-col justify-center px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/30 text-amber-400 font-mono transition-all active:scale-95 shadow-xs overflow-hidden cursor-pointer"
+          class="relative flex flex-col justify-center px-2.5 sm:px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/15 border border-rose-500/30 text-rose-400 font-mono transition-all active:scale-95 shadow-xs overflow-hidden cursor-pointer"
         >
           <div class="flex items-center gap-1.5 z-10 text-[11px] font-bold leading-none">
             {#if isUploading}
-              <RotateCw size={12} class="animate-spin text-amber-400 shrink-0" />
+              <RotateCw size={12} class="animate-spin text-rose-400 shrink-0" />
               <span>{uploadProgress}%</span>
               {#if pendingAudios > 0}
                 <span class="text-[9px] font-normal opacity-70">({pendingAudios})</span>
               {/if}
             {:else}
-              <CloudUpload size={12} class="text-amber-400 shrink-0" />
+              <CloudUpload size={12} class="text-rose-400 shrink-0" />
               <span>{pendingAudios}</span>
               <span class="hidden sm:inline text-[9px] uppercase font-bold tracking-wider opacity-80">Queued</span>
             {/if}
           </div>
 
-          <!-- Subtle 2px bottom micro progress track -->
           {#if isUploading && uploadProgress > 0}
-            <div class="absolute bottom-0 left-0 right-0 h-[2.5px] bg-amber-500/20">
+            <div class="absolute bottom-0 left-0 right-0 h-[2.5px] bg-rose-500/20">
               <div 
-                class="h-full bg-amber-400 shadow-[0_0_6px_#fbbf24] transition-all duration-150 rounded-r-full"
+                class="h-full bg-rose-400 shadow-[0_0_6px_#fb7185] transition-all duration-150 rounded-r-full"
                 style="width: {uploadProgress}%;"
               ></div>
             </div>
@@ -252,15 +104,15 @@
         </button>
       {/if}
 
-      <!-- Streak Metric Badge -->
+      <!-- Streak Badge -->
       {#if activeLangCode}
         <div 
           title="{streak} Day Streak"
           class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--bg-surface)]/90 border border-[var(--border-card)] shadow-xs transition-transform hover:scale-105"
-          style="box-shadow: 0 0 10px rgba(245,158,11,0.12);"
+          style="box-shadow: {streak >= 3 ? '0 0 12px rgba(245,158,11,0.2)' : '0 0 4px rgba(0,0,0,0.05)'};"
         >
-          <Flame size={13} class="text-amber-500 fill-amber-500/20" />
-          <span class="text-xs font-mono font-black text-amber-500">
+          <Flame size={13} class={streak >= 3 ? 'text-amber-500 fill-amber-500/20 animate-pulse' : 'text-neutral-400'} />
+          <span class="text-xs font-mono font-black {streak >= 3 ? 'text-amber-500' : 'text-neutral-500'}">
             {streak}<span class="text-[10px] font-bold text-[var(--text-muted)] ml-0.5">d</span>
           </span>
         </div>

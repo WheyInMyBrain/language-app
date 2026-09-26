@@ -177,6 +177,44 @@ export function getAllAdaptiveGoals() {
 }
 
 // -------------------------------------------------------------
+// 🌟 CATCH-UP LOGICAL COMPLETION HELPERS 🌟
+// -------------------------------------------------------------
+
+function getCompletedStorageKey(langCode, todayStr) {
+  return `catchup_completed:${langCode}:${todayStr}`;
+}
+
+export function getCompletedCatchUpList(langCode, todayStr) {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const key = getCompletedStorageKey(langCode, todayStr);
+    return JSON.parse(localStorage.getItem(key) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Records that a historical unvoiced word was given audio today.
+ */
+export function recordCatchUpCompleted(dateStr, wordIndex, todayStr, langCode = null) {
+  if (typeof localStorage === 'undefined') return;
+  const activeLang = langCode || metadataStore.activeLanguage || 'zh-CN';
+  const key = getCompletedStorageKey(activeLang, todayStr);
+  const itemKey = `${dateStr}#${wordIndex}`;
+
+  try {
+    const completedList = JSON.parse(localStorage.getItem(key) || '[]');
+    if (!completedList.includes(itemKey)) {
+      completedList.push(itemKey);
+      localStorage.setItem(key, JSON.stringify(completedList));
+    }
+  } catch (err) {
+    console.error('Failed to write catch-up completion to localStorage:', err);
+  }
+}
+
+// -------------------------------------------------------------
 // 🌟 UNIFIED DAILY CONDUCTOR & REVISION PRIORITIZER 🌟
 // -------------------------------------------------------------
 
@@ -185,7 +223,7 @@ export function getAllAdaptiveGoals() {
  * 1. Adaptive Input Targets (Listening, Speaking, Vocab)
  * 2. Uncapped Tri-Deck SRS Due Cards + Paced Recommendations (Vision, Audio, Writing)
  * 3. Prioritized DayPage Revisions (Lowest revision first!)
- * 4. Adaptive Catch-Up Siphon for unvoiced audio artifacts
+ * 4. Adaptive Catch-Up Siphon for unvoiced audio artifacts with bounded completion
  */
 export function getDailyMissionManifest(todayStr) {
   const langCode = metadataStore.activeLanguage || 'zh-CN';
@@ -255,7 +293,6 @@ export function getDailyMissionManifest(todayStr) {
   }
 
   // 4. DayPage Revisions with Priority Sorting:
-  // 🌟 LOWER REVISION NUMBER = HIGHER PRIORITY 🌟
   const entries = metadataStore.sortedCalendarEntries || [];
   const revisionsDue = [];
 
@@ -315,32 +352,40 @@ export function getDailyMissionManifest(todayStr) {
     }
   }
 
-  // Sort: Lowest score = Highest priority (surfaced at the top)
   revisionsDue.sort((a, b) => a.priorityScore - b.priorityScore);
 
-  // 5. Catch-Up Siphon: Collect past unvoiced words (FIFO) up to voiceWordQuota
+  // 5. Catch-Up Siphon: Fixed Daily Batch with Completion Tracking
+  const completedTodayList = getCompletedCatchUpList(langCode, todayStr);
+
   const pastEntries = Object.entries(cal)
     .filter(([key]) => key.startsWith(`${langCode}:`))
     .map(([key, data]) => ({ key, date: key.split(':')[1], ...data }))
     .filter(entry => entry.date < todayStr)
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  const unvoicedBatch = [];
-  let unvoicedHiddenCount = 0;
-
+  // Collect all historical unvoiced items (FIFO)
+  const allUnvoicedBacklog = [];
   for (const entry of pastEntries) {
     const wordIndices = entry.unvoiced_words_indices || [];
     for (const wIdx of wordIndices) {
-      if (unvoicedBatch.length < voiceWordQuota) {
-        unvoicedBatch.push({ date: entry.date, wordIndex: wIdx });
-      } else {
-        unvoicedHiddenCount++;
-      }
+      allUnvoicedBacklog.push({ date: entry.date, wordIndex: wIdx });
     }
   }
 
+  // Freeze today's assigned cohort: take the first N items matching voiceWordQuota
+  const todayAssignedCohort = allUnvoicedBacklog.slice(0, voiceWordQuota);
+
+  // Determine which items from today's assigned cohort are still pending
+  const surfaced = todayAssignedCohort.filter(item => {
+    const itemKey = `${item.date}#${item.wordIndex}`;
+    return !completedTodayList.includes(itemKey);
+  });
+
+  const completedCountToday = completedTodayList.length;
+  const unvoicedHiddenCount = Math.max(0, allUnvoicedBacklog.length - todayAssignedCohort.length);
+
   return {
-    goals, // listening, speaking, vocab targets
+    goals,
     srs: {
       vision: srsVision,
       listen: srsListen,
@@ -355,9 +400,10 @@ export function getDailyMissionManifest(todayStr) {
     revisions: revisionsDue,
     recommendedRevisionsCount: recRevs,
     unvoiced: {
-      surfaced: unvoicedBatch,
-      quota: voiceWordQuota,
-      hiddenCount: unvoicedHiddenCount
+      surfaced,                            // Shrinks as items are completed
+      quota: voiceWordQuota,               // Fixed target for today
+      completedCount: completedCountToday, // How many were done today
+      hiddenCount: unvoicedHiddenCount     // Kept buffered for upcoming days
     }
   };
 }

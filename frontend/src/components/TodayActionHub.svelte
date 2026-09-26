@@ -67,8 +67,8 @@
   let todayRevisions = $derived((manifest.revisions || []).filter(r => r.urgencyCategory === 'today'));
   let overdueRevisions = $derived((manifest.revisions || []).filter(r => r.urgencyCategory === 'overdue'));
 
-  // Catch-Up Speech Audio Batch
-  let catchUpAudio = $derived(manifest.unvoiced || { surfaced: [], quota: 5, hiddenCount: 0 });
+  // Catch-Up Speech Audio Batch (With fixed quota and completed tracking)
+  let catchUpAudio = $derived(manifest.unvoiced || { surfaced: [], quota: 5, completedCount: 0, hiddenCount: 0 });
 
   // Interactive Hover State
   let hoveredRingId = $state(null);
@@ -197,7 +197,6 @@
       };
     }
     
-    // Scale intensity with overdue days and lower revision weight
     const intensity = Math.min(item.overdueDays || 1, 7);
     const isPassZero = item.revision === 0;
     const redAlpha = isPassZero ? 0.28 : 0.18 + (intensity * 0.03);
@@ -763,16 +762,27 @@
           </span>
         </div>
         <span class="text-[10px] font-mono text-[var(--text-muted)]">
-          Quota: {catchUpAudio.surfaced.length}/{catchUpAudio.quota} items
+          Done: {catchUpAudio.completedCount || 0}/{catchUpAudio.quota} today
         </span>
       </div>
 
+      <!-- State A: Finished Today's Quota (Even if backlog still has items) -->
       {#if catchUpAudio.surfaced.length === 0}
         <div class="py-2.5 px-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-base)] text-center text-xs text-[var(--text-muted)] flex items-center justify-center gap-2">
           <CheckCircle2 size={13} style="color: {vocabColor};" />
-          <span>All recorded audio artifacts up to date</span>
+          <span>
+            {catchUpAudio.completedCount >= catchUpAudio.quota 
+              ? `Daily catch-up quota reached (${catchUpAudio.completedCount}/${catchUpAudio.quota})!` 
+              : 'All recorded audio artifacts up to date'}
+          </span>
+          {#if catchUpAudio.hiddenCount > 0}
+            <span class="text-[10px] font-mono text-[var(--text-muted)] opacity-70">
+              ({catchUpAudio.hiddenCount} buffered for upcoming days)
+            </span>
+          {/if}
         </div>
       {:else}
+        <!-- State B: Still have assigned items to do today -->
         <div class="p-3 sm:p-3.5 rounded-2xl border border-[var(--border-card)] bg-[var(--bg-surface-elevated)]/60 shadow-xs space-y-2.5 backdrop-blur-xs">
           
           <div class="flex items-center justify-between">
@@ -780,11 +790,16 @@
               <span class="w-2 h-2 rounded-full animate-ping" style="background-color: {writingColor};"></span>
               Daily Vocal Siphon Batch
             </span>
-            {#if catchUpAudio.hiddenCount > 0}
-              <span class="text-[10px] font-mono font-bold text-[var(--text-muted)] px-2 py-0.5 rounded-md bg-[var(--bg-base)] border border-[var(--border-subtle)]">
-                +{catchUpAudio.hiddenCount} buffered
+            <div class="flex items-center gap-2 font-mono text-[10px]">
+              <span class="px-2 py-0.5 rounded-md bg-[var(--bg-base)] border border-[var(--border-subtle)] text-[var(--text-secondary)]">
+                {catchUpAudio.surfaced.length} remaining today
               </span>
-            {/if}
+              {#if catchUpAudio.hiddenCount > 0}
+                <span class="text-[var(--text-muted)]">
+                  +{catchUpAudio.hiddenCount} buffered
+                </span>
+              {/if}
+            </div>
           </div>
 
           <!-- Fast-Access Tag Chips for Surfaced Words -->

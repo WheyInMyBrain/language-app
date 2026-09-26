@@ -4,6 +4,8 @@
   import { resolveAudioSource, saveAudioRecord } from '../lib/audioSync.js';
   import { getDocHandle, createSyncedDoc } from '../lib/yjs.js';
   import { metadataStore } from '../lib/stores/metadata.svelte.js';
+  import { recordingStore } from '../lib/stores/recordingStore.svelte.js';
+  import { recordCatchUpCompleted } from '../lib/services/momentumEngine.js';
 
   import { 
     Play, 
@@ -53,6 +55,14 @@
   let animFrameId = null;
   let micStream = null;
 
+  function formatLocalDate(d) {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  const todayStr = formatLocalDate(new Date());
+
   function formatTime(s) {
     const mins = Math.floor(s / 60);
     const secs = Math.floor(s % 60);
@@ -79,10 +89,12 @@
     const handle = getDocHandle(roomName) || createSyncedDoc(roomName);
     if (!handle?.doc) return;
 
+    const itemIdx = Number(item.word_index ?? item.item_index ?? item.id ?? index);
+
     if (type === 'vocab') {
       const wordsArr = handle.doc.getArray('words');
       const list = wordsArr.toArray().flat();
-      const targetIdx = list.findIndex((w) => Number(w.word_index ?? w.id) === Number(index));
+      const targetIdx = list.findIndex((w) => Number(w.word_index ?? w.id) === itemIdx);
 
       if (targetIdx !== -1) {
         handle.doc.transact(() => {
@@ -95,7 +107,7 @@
       const actsArr = handle.doc.getArray('activities');
       const list = actsArr.toArray().flat();
       const targetIdx = list.findIndex(
-        (a) => a.activity_type === type && Number(a.item_index) === Number(index)
+        (a) => a.activity_type === type && Number(a.item_index) === itemIdx
       );
 
       if (targetIdx !== -1) {
@@ -109,6 +121,11 @@
 
     metadataStore.refreshDayTotals(lang, date);
     if (onDurationChange) onDurationChange(seconds);
+
+    // 🌟 Catch-Up Task Registration: Past dates receiving audio 🌟
+    if (date && date < todayStr && (type === 'vocab' || category === 'vocab')) {
+      recordCatchUpCompleted(date, itemIdx, todayStr, lang);
+    }
   }
 
   // 🌟 FULL-SPECTRUM BALANCED HUMAN VOICE AUDIOGRAPH 🌟
@@ -127,19 +144,18 @@
 
       analyserNode = audioCtx.createAnalyser();
       analyserNode.fftSize = 512;
-      analyserNode.smoothingTimeConstant = 0.82; // Butter-smooth spring transition
+      analyserNode.smoothingTimeConstant = 0.82;
 
       const source = audioCtx.createMediaStreamSource(stream);
       source.connect(analyserNode);
 
-      const bufferLength = analyserNode.frequencyBinCount; // 256 bins
+      const bufferLength = analyserNode.frequencyBinCount;
       const timeData = new Uint8Array(bufferLength);
       const freqData = new Uint8Array(bufferLength);
 
       const dpr = window.devicePixelRatio || 1;
       const ctx = canvasEl.getContext('2d');
 
-      // Sync canvas pixel buffers to actual element bounding box
       function updateCanvasBounds() {
         if (!canvasEl) return { width: 340, height: 64 };
         const rect = canvasEl.getBoundingClientRect();
@@ -154,7 +170,6 @@
       }
 
       const totalBars = 36;
-      // Speech frequencies span bins ~1 to ~48 (approx 85Hz to 4200Hz at 44.1kHz)
       const maxSpeechBin = Math.min(52, bufferLength);
       const minSpeechBin = 2;
 
@@ -169,16 +184,13 @@
 
         ctx.clearRect(0, 0, width, height);
 
-        // 1. Full-Width Vocal Spectrum Bars
         const gap = 2.5;
         const barWidth = (width - (totalBars - 1) * gap) / totalBars;
 
         for (let i = 0; i < totalBars; i++) {
-          // Logarithmic power distribution: maps 0..35 into 2..52
           const factor = Math.pow(i / (totalBars - 1), 1.4);
           const binIndex = Math.floor(minSpeechBin + factor * (maxSpeechBin - minSpeechBin));
           
-          // Boost higher vocal harmonics slightly so right side responds with equal energy
           const trebleBoost = 1.0 + (i / totalBars) * 1.6;
           const rawVal = freqData[binIndex] || 0;
           const normalized = Math.min(1.0, (rawVal / 255) * trebleBoost);
@@ -187,14 +199,12 @@
           const x = i * (barWidth + gap);
           const y = height - barHeight;
 
-          // Glowing rounded pill bars
           ctx.fillStyle = `color-mix(in srgb, ${accentColor} ${Math.round(25 + normalized * 65)}%, transparent)`;
           ctx.beginPath();
           ctx.roundRect(x, y, barWidth, barHeight, [2, 2, 0, 0]);
           ctx.fill();
         }
 
-        // 2. Continuous Liquid Oscilloscope Ribbon
         ctx.lineWidth = 2.2;
         ctx.strokeStyle = accentColor;
         ctx.shadowColor = accentColor;
@@ -205,7 +215,7 @@
         let curX = 0;
 
         for (let i = 0; i < bufferLength; i++) {
-          const v = timeData[i] / 128.0; // 1.0 = neutral center
+          const v = timeData[i] / 128.0;
           const curY = (v * height) / 2;
 
           if (i === 0) {
@@ -241,6 +251,7 @@
       if (timerInterval) clearInterval(timerInterval);
       mediaRecorder?.stop();
       isRecording = false;
+      recordingStore.stop();
       stopVisualizer();
       return;
     }
@@ -296,15 +307,16 @@
 
       mediaRecorder.start();
       isRecording = true;
+      recordingStore.start();
       elapsedSec = 0;
       timerInterval = setInterval(() => {
         elapsedSec += 1;
       }, 1000);
 
-      // Start the canvas visualizer loop
       startVisualizer(micStream);
     } catch (err) {
       console.error('Mic access error:', err);
+      recordingStore.stop();
       alert('Microphone permission required for audio recordings.');
     }
   }
@@ -347,6 +359,9 @@
   }
 
   onDestroy(() => {
+    if (isRecording) {
+      recordingStore.stop();
+    }
     if (timerInterval) clearInterval(timerInterval);
     if (playbackInterval) clearInterval(playbackInterval);
     if (audioEl) audioEl.pause();
