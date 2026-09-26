@@ -1,8 +1,11 @@
 <!-- frontend/src/components/Header.svelte -->
 <script>
+  import { onMount } from 'svelte';
   import { metadataStore } from '../lib/stores/metadata.svelte.js';
   import { activeLanguage } from '../lib/stores/activeLanguage.svelte.js';
   import { srsStore } from '../lib/stores/srs.svelte.js';
+  import { uploadProgressStore } from '../lib/stores/uploadProgress.svelte.js';
+  import { refreshPendingAudioCount, syncPendingAudios } from '../lib/audioSync.js';
 
   // Razor-sharp vector icons
   import { 
@@ -12,7 +15,9 @@
     Check, 
     Sparkles, 
     Globe,
-    Layers
+    Layers,
+    CloudUpload,
+    RotateCw
   } from '@lucide/svelte';
 
   let { handleBack, activeRoute = 'dashboard' } = $props();
@@ -35,6 +40,11 @@
 
   // Streak
   let streak = $derived(activeLangConfig?.current_streak || 0);
+
+  // Audio Upload Telemetry
+  let pendingAudios = $derived(uploadProgressStore.pendingCount);
+  let isUploading = $derived(uploadProgressStore.isUploading);
+  let uploadProgress = $derived(uploadProgressStore.progress);
 
   // Instant Native Popover State (Zero lag, zero portals)
   let isLangMenuOpen = $state(false);
@@ -60,6 +70,10 @@
       isLangMenuOpen = false;
     }
   }
+
+  onMount(() => {
+    refreshPendingAudioCount();
+  });
 </script>
 
 <svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
@@ -203,6 +217,40 @@
 
     <!-- RIGHT: Telemetry Indicators, Pulse Streaks & Sync Status -->
     <div class="flex items-center gap-2 sm:gap-2.5">
+
+      <!-- 🌟 OFFLINE AUDIO OUTBOX & LIVE PROGRESS CAPSULE 🌟 -->
+      {#if pendingAudios > 0 || isUploading}
+        <button
+          type="button"
+          onclick={() => syncPendingAudios()}
+          title="{pendingAudios} recording(s) pending. Click to force sync."
+          class="relative flex flex-col justify-center px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/30 text-amber-400 font-mono transition-all active:scale-95 shadow-xs overflow-hidden cursor-pointer"
+        >
+          <div class="flex items-center gap-1.5 z-10 text-[11px] font-bold leading-none">
+            {#if isUploading}
+              <RotateCw size={12} class="animate-spin text-amber-400 shrink-0" />
+              <span>{uploadProgress}%</span>
+              {#if pendingAudios > 0}
+                <span class="text-[9px] font-normal opacity-70">({pendingAudios})</span>
+              {/if}
+            {:else}
+              <CloudUpload size={12} class="text-amber-400 shrink-0" />
+              <span>{pendingAudios}</span>
+              <span class="hidden sm:inline text-[9px] uppercase font-bold tracking-wider opacity-80">Queued</span>
+            {/if}
+          </div>
+
+          <!-- Subtle 2px bottom micro progress track -->
+          {#if isUploading && uploadProgress > 0}
+            <div class="absolute bottom-0 left-0 right-0 h-[2.5px] bg-amber-500/20">
+              <div 
+                class="h-full bg-amber-400 shadow-[0_0_6px_#fbbf24] transition-all duration-150 rounded-r-full"
+                style="width: {uploadProgress}%;"
+              ></div>
+            </div>
+          {/if}
+        </button>
+      {/if}
 
       <!-- Streak Metric Badge -->
       {#if activeLangCode}

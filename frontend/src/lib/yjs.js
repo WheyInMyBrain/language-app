@@ -8,10 +8,14 @@ import { IndexeddbPersistence } from 'y-indexeddb';
 import * as syncProtocol from 'y-protocols/sync';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
+import { syncPendingAudios } from './audioSync.js';
 
 const MSG_SUBSCRIBE = 0x01;
 const MSG_UNSUBSCRIBE = 0x02;
 const MSG_PAYLOAD = 0x03;
+
+// 🌟 Reconnection Interval: 5 Minutes (300,000 ms) 🌟
+const RECONNECT_INTERVAL_MS = 5 * 60 * 1000;
 
 class MultiplexedWsClient {
   constructor() {
@@ -19,6 +23,24 @@ class MultiplexedWsClient {
     this.rooms = new Map(); // roomName -> Set<{ doc, onStatusChange }>
     this.status = 'disconnected'; // 'connecting' | 'connected' | 'disconnected'
     this.reconnectTimer = null;
+
+    // Listen for OS/browser network recovery to connect without waiting out the full 5m timer
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', () => {
+        if (this.status !== 'connected' && this.rooms.size > 0) {
+          this.clearReconnectTimer();
+          this.connect();
+        }
+      });
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && this.status !== 'connected' && this.rooms.size > 0) {
+          if (!this.reconnectTimer) {
+            this.connect();
+          }
+        }
+      });
+    }
   }
 
   getWsUrl() {
@@ -27,11 +49,19 @@ class MultiplexedWsClient {
     return `${proto}//${window.location.host}/ws`;
   }
 
+  clearReconnectTimer() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
   connect() {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
+    this.clearReconnectTimer();
     this.status = 'connecting';
     this.notifyAllStatus('connecting');
 
@@ -40,6 +70,7 @@ class MultiplexedWsClient {
       this.ws.binaryType = 'arraybuffer';
 
       this.ws.onopen = () => {
+        this.clearReconnectTimer();
         this.status = 'connected';
         this.notifyAllStatus('connected');
 
@@ -53,6 +84,9 @@ class MultiplexedWsClient {
             this.sendPayload(roomName, encoding.toUint8Array(encoder));
           }
         }
+
+        // 🌟 Reconnected to server: Flush all pending offline audio recordings immediately! 🌟
+        syncPendingAudios();
       };
 
       this.ws.onmessage = (event) => {
@@ -75,12 +109,14 @@ class MultiplexedWsClient {
 
   scheduleReconnect() {
     if (this.reconnectTimer) return;
+
+    // 🌟 Wait 5 minutes between reconnect checks 🌟
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      if (this.rooms.size > 0) {
+      if (this.rooms.size > 0 && this.status !== 'connected') {
         this.connect();
       }
-    }, 2500);
+    }, RECONNECT_INTERVAL_MS);
   }
 
   notifyAllStatus(status) {
@@ -186,6 +222,9 @@ class MultiplexedWsClient {
           this.rooms.delete(roomName);
           this.sendUnsubscribe(roomName);
         }
+      }
+      if (this.rooms.size === 0) {
+        this.clearReconnectTimer();
       }
     };
   }

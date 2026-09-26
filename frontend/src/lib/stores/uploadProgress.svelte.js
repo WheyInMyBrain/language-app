@@ -1,11 +1,18 @@
 // frontend/src/lib/stores/uploadProgress.svelte.js
 
 class UploadProgressStore {
-  // 0 to 100
+  // Overall aggregated progress: 0 to 100
   progress = $state(0);
   isUploading = $state(false);
+  
+  // Total pending items remaining in IndexedDB outbox
+  pendingCount = $state(0);
 
   #activeTasks = new Map(); // id -> { loaded, total }
+
+  setPendingCount(count) {
+    this.pendingCount = Math.max(0, Number(count) || 0);
+  }
 
   startTask(id, totalBytes = 0) {
     this.#activeTasks.set(id, { loaded: 0, total: totalBytes || 1 });
@@ -23,7 +30,7 @@ class UploadProgressStore {
     this.#activeTasks.delete(id);
     if (this.#activeTasks.size === 0) {
       this.progress = 100;
-      // Brief delay so the user catches the completed bar before it fades out
+      // Brief delay so the user catches the completed bar before it resets
       setTimeout(() => {
         if (this.#activeTasks.size === 0) {
           this.isUploading = false;

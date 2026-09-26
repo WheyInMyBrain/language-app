@@ -4,6 +4,8 @@ import { uploadProgressStore } from './stores/uploadProgress.svelte.js';
 const DB_NAME = 'lang_app_audio_vault';
 const STORE_NAME = 'offline_recordings';
 
+let isSyncing = false;
+
 function openAudioDb() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
@@ -16,6 +18,25 @@ function openAudioDb() {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+}
+
+/**
+ * Reads the total pending offline items from IndexedDB and syncs the store
+ */
+export async function refreshPendingAudioCount() {
+  try {
+    const db = await openAudioDb();
+    const count = await new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const req = tx.objectStore(STORE_NAME).count();
+      req.onsuccess = () => resolve(req.result || 0);
+      req.onerror = () => resolve(0);
+    });
+    uploadProgressStore.setPendingCount(count);
+    return count;
+  } catch {
+    return 0;
+  }
 }
 
 export function getAudioStaticUrl(lang, date, category, index) {
@@ -77,6 +98,9 @@ export async function saveAudioRecord({ lang, date, category, index, blob, durat
   tx.objectStore(STORE_NAME).put(payload);
   await new Promise((resolve) => (tx.oncomplete = resolve));
 
+  // Update badge count immediately on save
+  await refreshPendingAudioCount();
+
   return await uploadSingleRecord(payload, db);
 }
 
@@ -84,7 +108,9 @@ export async function saveAudioRecord({ lang, date, category, index, blob, durat
  * Uploads via XHR using Vite's relative proxy (/api/audio/...)
  */
 function uploadSingleRecord(item, db) {
-  if (!navigator.onLine) return Promise.resolve(false);
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return Promise.resolve(false);
+  }
 
   const uploadUrl = `/api/audio/${item.lang}/${item.date}/${item.category}/${item.index}`;
 
@@ -106,9 +132,11 @@ function uploadSingleRecord(item, db) {
         try {
           const delTx = db.transaction(STORE_NAME, 'readwrite');
           delTx.objectStore(STORE_NAME).delete(item.id);
+          await new Promise((res) => (delTx.oncomplete = res));
         } catch (err) {
           console.warn('[AudioSync] Failed to clear DB item:', err);
         }
+        await refreshPendingAudioCount();
         resolve(true);
       } else {
         resolve(false);
@@ -130,8 +158,11 @@ function uploadSingleRecord(item, db) {
  * Sequential background drain when back online
  */
 export async function syncPendingAudios() {
-  if (!navigator.onLine) return;
+  if ((typeof navigator !== 'undefined' && !navigator.onLine) || isSyncing) {
+    return;
+  }
 
+  isSyncing = true;
   try {
     const db = await openAudioDb();
     const tx = db.transaction(STORE_NAME, 'readonly');
@@ -142,14 +173,42 @@ export async function syncPendingAudios() {
       req.onerror = () => resolve([]);
     });
 
+    uploadProgressStore.setPendingCount(pendingItems.length);
+
     for (const item of pendingItems) {
-      await uploadSingleRecord(item, db);
+      const ok = await uploadSingleRecord(item, db);
+      if (!ok) {
+        // If server is unreachable or offline, halt queue to prevent continuous failed requests
+        break;
+      }
     }
   } catch (err) {
     console.error('[AudioSync] Queue processor failure:', err);
+  } finally {
+    isSyncing = false;
+    await refreshPendingAudioCount();
   }
 }
 
+// 🌟 Environmental Event Listeners for Reliable Outbox Flushing 🌟
 if (typeof window !== 'undefined') {
-  window.addEventListener('online', () => syncPendingAudios());
+  // 1. Browser/OS recovers network
+  window.addEventListener('online', () => {
+    refreshPendingAudioCount();
+    syncPendingAudios();
+  });
+
+  // 2. Tab is focused or brought to foreground
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      refreshPendingAudioCount();
+      syncPendingAudios();
+    }
+  });
+
+  // 3. Scan on app boot
+  setTimeout(() => {
+    refreshPendingAudioCount();
+    syncPendingAudios();
+  }, 1000);
 }
