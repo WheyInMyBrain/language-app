@@ -46,7 +46,7 @@
   
   <!-- 🌟 1. UNIFIED VISIONOS HEADER GLASS POD 🌟 -->
   <header 
-    class="relative flex items-center justify-between p-4 sm:p-5 rounded-3xl border border-black/10 dark:border-white/15 bg-white/70 dark:bg-[#12131a]/75 backdrop-blur-2xl backdrop-saturate-[180%] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.18),inset_0_1px_1px_rgba(255,255,255,0.45)] dark:shadow-[0_24px_50px_-12px_rgba(0,0,0,0.7),inset_0_1px_1px_rgba(255,255,255,0.15)] overflow-hidden flex-wrap gap-3"
+    class="bloom-cascade delay-1 relative flex items-center justify-between p-4 sm:p-5 rounded-3xl border border-black/10 dark:border-white/15 bg-white/70 dark:bg-[#12131a]/75 backdrop-blur-2xl backdrop-saturate-[180%] shadow-[0_20px_50px_-12px_rgba(0,0,0,0.18),inset_0_1px_1px_rgba(255,255,255,0.45)] dark:shadow-[0_24px_50px_-12px_rgba(0,0,0,0.7),inset_0_1px_1px_rgba(255,255,255,0.15)] overflow-hidden flex-wrap gap-3"
   >
     <div 
       class="pointer-events-none absolute top-0 left-0 right-0 h-[2px] opacity-90 z-20"
@@ -104,7 +104,7 @@
   </header>
 
   <!-- 🌟 STAGE 1: CREATIVE SENTENCE FORGE (Mixer) 🌟 -->
-  <section class="space-y-4 relative">
+  <section class="bloom-cascade delay-2 space-y-4 relative">
     <div class="flex items-center gap-3">
       <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
       <div 
@@ -123,7 +123,7 @@
   </section>
 
   <!-- 🌟 STAGE 2: VISUAL RECALL STUDIO 🌟 -->
-  <section class="space-y-4 relative">
+  <section class="bloom-cascade delay-3 space-y-4 relative">
     <div class="flex items-center gap-3">
       <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
       <div 
@@ -150,7 +150,7 @@
   </section>
 
   <!-- 🌟 STAGE 3: TONE EAR TRAINER 🌟 -->
-  <section class="space-y-4 relative">
+  <section class="bloom-cascade delay-4 space-y-4 relative">
     <div class="flex items-center gap-3">
       <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
       <div 
@@ -177,7 +177,7 @@
   </section>
 
   <!-- 🌟 STAGE 4: MOTOR RECALL & CALLIGRAPHY (Writing Quiz) 🌟 -->
-  <section class="space-y-4 relative">
+  <section class="bloom-cascade delay-5 space-y-4 relative">
     <div class="flex items-center gap-3">
       <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
       <div 
@@ -196,3 +196,30 @@
   </section>
 
 </div>
+
+<style>
+  /* 🌟 Volumetric Organic Bloom Unfurl 🌟 */
+  @keyframes pageBloom {
+    0% {
+      opacity: 0;
+      transform: translateY(10px) scale(0.99);
+      filter: blur(6px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      filter: blur(0px);
+    }
+  }
+
+  .bloom-cascade {
+    animation: pageBloom 480ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    will-change: opacity, transform, filter;
+  }
+
+  .delay-1 { animation-delay: 30ms; }
+  .delay-2 { animation-delay: 80ms; }
+  .delay-3 { animation-delay: 130ms; }
+  .delay-4 { animation-delay: 180ms; }
+  .delay-5 { animation-delay: 240ms; }
+</style>

@@ -153,7 +153,6 @@
       if (isSynced) handleSynced();
     };
 
-    // 🌟 SAFE GUARD: wsProvider may be null or undefined
     if (wsProvider && typeof wsProvider.on === 'function') {
       wsProvider.on('sync', handleWsSync);
     }
@@ -239,7 +238,7 @@
   style="--day-accent: {themeColor};"
 >
   {#if !isLoaded}
-    <div class="py-24 flex flex-col items-center justify-center space-y-3 text-center">
+    <div class="py-24 flex flex-col items-center justify-center space-y-3 text-center transition-opacity duration-300">
       <div 
         class="w-10 h-10 rounded-2xl flex items-center justify-center animate-spin border shadow-xs"
         style="background-color: color-mix(in srgb, var(--day-accent) 15%, transparent); border-color: color-mix(in srgb, var(--day-accent) 35%, transparent); color: var(--day-accent);"
@@ -252,12 +251,12 @@
     </div>
   {:else}
 
-    <!-- 🌟 1. UNIFIED GLASS RAIL HEADER WITH DATE SCRUBBING & ACTIVITY SPARKLINES 🌟 -->
-    <header class="flex items-center justify-between gap-3 pb-3 border-b border-[var(--border-subtle)] relative z-20 flex-wrap sm:flex-nowrap">
+    <!-- 🌟 1. UNIFIED GLASS RAIL HEADER WITH CASCADE ENTRANCE 🌟 -->
+    <header class="bloom-cascade delay-1 flex items-center justify-between gap-3 pb-3 border-b border-[var(--border-subtle)] relative z-20 flex-wrap sm:flex-nowrap">
       
       <!-- Date Scrubber Capsule -->
       <div class="flex items-center gap-2">
-        <div class="flex items-center p-1 rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] shadow-xs">
+        <div class="flex items-center p-1 rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] shadow-xs transition-transform duration-200 hover:scale-[1.01]">
           <button
             type="button"
             onclick={() => navigateDate(-1)}
@@ -295,19 +294,19 @@
           title="Daily Study Distribution (Vocab, CI, Listening, Grammar)"
         >
           <span 
-            class="w-2 h-3 rounded-full transition-opacity" 
+            class="w-2 h-3 rounded-full transition-all duration-300" 
             style="background-color: {vocabColor}; opacity: {words.length > 0 ? 1 : 0.2}; box-shadow: {words.length > 0 ? `0 0 6px ${vocabColor}` : 'none'};"
           ></span>
           <span 
-            class="w-2 h-3 rounded-full transition-opacity" 
+            class="w-2 h-3 rounded-full transition-all duration-300" 
             style="background-color: {ciColor}; opacity: {ciActivities.length > 0 ? 1 : 0.2}; box-shadow: {ciActivities.length > 0 ? `0 0 6px ${ciColor}` : 'none'};"
           ></span>
           <span 
-            class="w-2 h-3 rounded-full transition-opacity" 
+            class="w-2 h-3 rounded-full transition-all duration-300" 
             style="background-color: {listeningColor}; opacity: {listeningActivities.length > 0 ? 1 : 0.2}; box-shadow: {listeningActivities.length > 0 ? `0 0 6px ${listeningColor}` : 'none'};"
           ></span>
           <span 
-            class="w-2 h-3 rounded-full transition-opacity" 
+            class="w-2 h-3 rounded-full transition-all duration-300" 
             style="background-color: {grammarColor}; opacity: {grammarActivities.length > 0 ? 1 : 0.2}; box-shadow: {grammarActivities.length > 0 ? `0 0 6px ${grammarColor}` : 'none'};"
           ></span>
         </div>
@@ -318,8 +317,8 @@
       </div>
     </header>
 
-    <!-- 🌟 2. STABLE MAXIMUM ENVELOPE DOCK (Clean: Zero Artificial Edge Fog) 🌟 -->
-    <div class="sticky top-2 z-40 w-full" style="contain: style;">
+    <!-- 🌟 2. OMNIBAR DOCK WITH SECONDARY STAGGER 🌟 -->
+    <div class="bloom-cascade delay-2 sticky top-2 z-40 w-full" style="contain: style;">
       <OmniBar
         {words}
         {ciActivities}
@@ -339,12 +338,12 @@
       />
     </div>
 
-    <!-- 🌟 3. FILTER QUICK-JUMP CHIPS 🌟 -->
-    <div class="flex items-center gap-1.5 overflow-x-auto pb-1 pt-1 no-scrollbar z-20">
+    <!-- 🌟 3. FILTER QUICK-JUMP CHIPS WITH OPTICAL BLOOM 🌟 -->
+    <div class="bloom-cascade delay-3 flex items-center gap-1.5 overflow-x-auto pb-1 pt-1 no-scrollbar z-20">
       <button
         type="button"
         onclick={() => (activeFilter = 'all')}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-150 cursor-pointer border {activeFilter === 'all' 
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border {activeFilter === 'all' 
           ? 'bg-[var(--bg-surface-elevated)] border-[var(--border-hover)] text-[var(--text-primary)] shadow-xs scale-105' 
           : 'bg-[var(--bg-surface)]/80 border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'}"
       >
@@ -355,7 +354,7 @@
       <button
         type="button"
         onclick={() => (activeFilter = 'vocab')}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-150 cursor-pointer border"
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border"
         style="
           background-color: {activeFilter === 'vocab' ? `color-mix(in srgb, ${vocabColor} 18%, var(--bg-surface))` : 'var(--bg-surface)'};
           border-color: {activeFilter === 'vocab' ? vocabColor : 'var(--border-subtle)'};
@@ -369,7 +368,7 @@
       <button
         type="button"
         onclick={() => (activeFilter = 'ci')}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-150 cursor-pointer border"
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border"
         style="
           background-color: {activeFilter === 'ci' ? `color-mix(in srgb, ${ciColor} 18%, var(--bg-surface))` : 'var(--bg-surface)'};
           border-color: {activeFilter === 'ci' ? ciColor : 'var(--border-subtle)'};
@@ -383,7 +382,7 @@
       <button
         type="button"
         onclick={() => (activeFilter = 'listening')}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-150 cursor-pointer border"
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border"
         style="
           background-color: {activeFilter === 'listening' ? `color-mix(in srgb, ${listeningColor} 18%, var(--bg-surface))` : 'var(--bg-surface)'};
           border-color: {activeFilter === 'listening' ? listeningColor : 'var(--border-subtle)'};
@@ -397,7 +396,7 @@
       <button
         type="button"
         onclick={() => (activeFilter = 'grammar')}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-150 cursor-pointer border"
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border"
         style="
           background-color: {activeFilter === 'grammar' ? `color-mix(in srgb, ${grammarColor} 18%, var(--bg-surface))` : 'var(--bg-surface)'};
           border-color: {activeFilter === 'grammar' ? grammarColor : 'var(--border-subtle)'};
@@ -411,7 +410,7 @@
 
     <!-- 🌟 4. THE DYNAMIC BENTO STUDIO PAVILIONS 🌟 -->
     {#if totalItemsCount === 0}
-      <div class="py-14 px-6 rounded-3xl border border-dashed border-[var(--border-card)] bg-[var(--bg-surface)]/30 backdrop-blur-md text-center space-y-3 max-w-md mx-auto shadow-xs">
+      <div class="bloom-cascade delay-4 py-14 px-6 rounded-3xl border border-dashed border-[var(--border-card)] bg-[var(--bg-surface)]/30 backdrop-blur-md text-center space-y-3 max-w-md mx-auto shadow-xs">
         <div 
           class="w-10 h-10 rounded-2xl flex items-center justify-center mx-auto border shadow-xs"
           style="background-color: color-mix(in srgb, var(--day-accent) 15%, transparent); border-color: color-mix(in srgb, var(--day-accent) 35%, transparent); color: var(--day-accent);"
@@ -435,8 +434,7 @@
         <!-- PAVILION 1: VOCABULARY AUTO-WALL               -->
         <!-- ============================================== -->
         {#if activeFilter === 'all' || activeFilter === 'vocab'}
-          <section class="space-y-4 relative">
-            <!-- 🌟 Lateral Flank Bleed (Left and Right Inward Lighting) 🌟 -->
+          <section class="bloom-cascade delay-3 space-y-4 relative">
             <div 
               class="pointer-events-none absolute -left-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
               style="background: radial-gradient(circle at 0% 50%, {vocabColor}, transparent 75%);"
@@ -446,7 +444,6 @@
               style="background: radial-gradient(circle at 100% 50%, {vocabColor}, transparent 75%);"
             ></div>
 
-            <!-- Matching Section Bridge Header -->
             <div class="flex items-center gap-3">
               <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
               <div 
@@ -467,13 +464,19 @@
             {#if words.length > 0}
               <div class="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 sm:gap-5 items-start">
                 {#each words as word, i (`v_${word.id ?? word.word_index ?? i}`)}
-                  <OmniCard
-                    type="vocab"
-                    lang={langCode}
-                    {date}
-                    item={word}
-                    index={word.word_index ?? (i + 1)}
-                  />
+                  <!-- Staggered Card Mount Ripple -->
+                  <div 
+                    class="card-ripple" 
+                    style="animation-delay: {Math.min(i * 32, 400)}ms;"
+                  >
+                    <OmniCard
+                      type="vocab"
+                      lang={langCode}
+                      {date}
+                      item={word}
+                      index={word.word_index ?? (i + 1)}
+                    />
+                  </div>
                 {/each}
               </div>
             {:else}
@@ -494,8 +497,7 @@
         <!-- PAVILION 2: COMPREHENSIBLE INPUT (Dynamic Bento) -->
         <!-- ============================================== -->
         {#if activeFilter === 'all' || activeFilter === 'ci'}
-          <section class="space-y-4 relative">
-            <!-- 🌟 Lateral Flank Bleed 🌟 -->
+          <section class="bloom-cascade delay-4 space-y-4 relative">
             <div 
               class="pointer-events-none absolute -left-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
               style="background: radial-gradient(circle at 0% 50%, {ciColor}, transparent 75%);"
@@ -525,13 +527,18 @@
             {#if ciActivities.length > 0}
               <div class={ciActivities.length === 1 ? 'max-w-3xl mx-auto w-full' : 'grid grid-cols-1 lg:grid-cols-2 gap-5 items-start'}>
                 {#each ciActivities as activity, i (`ci_${activity.id ?? activity.item_index ?? i}`)}
-                  <OmniCard
-                    type="ci"
-                    lang={langCode}
-                    {date}
-                    item={activity}
-                    index={activity.item_index ?? (i + 1)}
-                  />
+                  <div 
+                    class="card-ripple" 
+                    style="animation-delay: {Math.min(i * 45, 300)}ms;"
+                  >
+                    <OmniCard
+                      type="ci"
+                      lang={langCode}
+                      {date}
+                      item={activity}
+                      index={activity.item_index ?? (i + 1)}
+                    />
+                  </div>
                 {/each}
               </div>
             {:else}
@@ -552,8 +559,7 @@
         <!-- PAVILION 3: LISTENING IMMERSION (Dynamic Bento) -->
         <!-- ============================================== -->
         {#if activeFilter === 'all' || activeFilter === 'listening'}
-          <section class="space-y-4 relative">
-            <!-- 🌟 Lateral Flank Bleed 🌟 -->
+          <section class="bloom-cascade delay-4 space-y-4 relative">
             <div 
               class="pointer-events-none absolute -left-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
               style="background: radial-gradient(circle at 0% 50%, {listeningColor}, transparent 75%);"
@@ -583,13 +589,18 @@
             {#if listeningActivities.length > 0}
               <div class={listeningActivities.length === 1 ? 'max-w-3xl mx-auto w-full' : 'grid grid-cols-1 lg:grid-cols-2 gap-5 items-start'}>
                 {#each listeningActivities as activity, i (`li_${activity.id ?? activity.item_index ?? i}`)}
-                  <OmniCard
-                    type="listening"
-                    lang={langCode}
-                    {date}
-                    item={activity}
-                    index={activity.item_index ?? (i + 1)}
-                  />
+                  <div 
+                    class="card-ripple" 
+                    style="animation-delay: {Math.min(i * 45, 300)}ms;"
+                  >
+                    <OmniCard
+                      type="listening"
+                      lang={langCode}
+                      {date}
+                      item={activity}
+                      index={activity.item_index ?? (i + 1)}
+                    />
+                  </div>
                 {/each}
               </div>
             {:else}
@@ -610,8 +621,7 @@
         <!-- PAVILION 4: GRAMMAR & PATTERNS                 -->
         <!-- ============================================== -->
         {#if activeFilter === 'all' || activeFilter === 'grammar'}
-          <section class="space-y-4 relative">
-            <!-- 🌟 Lateral Flank Bleed 🌟 -->
+          <section class="bloom-cascade delay-5 space-y-4 relative">
             <div 
               class="pointer-events-none absolute -left-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
               style="background: radial-gradient(circle at 0% 50%, {grammarColor}, transparent 75%);"
@@ -641,13 +651,18 @@
             {#if grammarActivities.length > 0}
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5 items-start">
                 {#each grammarActivities as activity, i (`gr_${activity.id ?? activity.item_index ?? i}`)}
-                  <OmniCard
-                    type="grammar"
-                    lang={langCode}
-                    {date}
-                    item={activity}
-                    index={activity.item_index ?? (i + 1)}
-                  />
+                  <div 
+                    class="card-ripple" 
+                    style="animation-delay: {Math.min(i * 45, 300)}ms;"
+                  >
+                    <OmniCard
+                      type="grammar"
+                      lang={langCode}
+                      {date}
+                      item={activity}
+                      index={activity.item_index ?? (i + 1)}
+                    />
+                  </div>
                 {/each}
               </div>
             {:else}
@@ -668,8 +683,8 @@
 
     {/if}
 
-    <!-- 🌟 5. BOTTOM SRS REVISION BAR (Clean: Zero Artificial Edge Fog) 🌟 -->
-    <div class="sticky bottom-3 z-40 w-full pt-4 pointer-events-none">
+    <!-- 🌟 5. BOTTOM SRS REVISION BAR WITH DOCKED RESOLUTION 🌟 -->
+    <div class="bloom-cascade delay-5 sticky bottom-3 z-40 w-full pt-4 pointer-events-none">
       <div class="pointer-events-auto w-full">
         <SRSBar {session} activeDate={date} onReview={handleSRSReview} />
       </div>
@@ -678,3 +693,49 @@
   {/if}
 
 </div>
+
+<style>
+  /* 🌟 Volumetric Organic Bloom Unfurl 🌟 */
+  @keyframes pageBloom {
+    0% {
+      opacity: 0;
+      transform: translateY(8px) scale(0.99);
+      filter: blur(6px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      filter: blur(0px);
+    }
+  }
+
+  /* 🌟 Subtle Card Ripple Cascade 🌟 */
+  @keyframes cardPop {
+    0% {
+      opacity: 0;
+      transform: translateY(12px) scale(0.97);
+      filter: blur(4px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      filter: blur(0px);
+    }
+  }
+
+  .bloom-cascade {
+    animation: pageBloom 480ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    will-change: opacity, transform, filter;
+  }
+
+  .delay-1 { animation-delay: 40ms; }
+  .delay-2 { animation-delay: 90ms; }
+  .delay-3 { animation-delay: 140ms; }
+  .delay-4 { animation-delay: 200ms; }
+  .delay-5 { animation-delay: 260ms; }
+
+  .card-ripple {
+    animation: cardPop 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    will-change: opacity, transform, filter;
+  }
+</style>

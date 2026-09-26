@@ -1,11 +1,11 @@
 <!-- frontend/src/components/RightEdgeDrawer.svelte -->
 <script>
   import { activeLanguage } from '../lib/stores/activeLanguage.svelte.js';
-  import { ChevronLeft, X, Sparkles, GripVertical } from '@lucide/svelte';
+  import { ChevronLeft, X, Sparkles, Layers } from '@lucide/svelte';
 
   let {
     isOpen = $bindable(false),
-    width = 360,
+    width = 380,
     children
   } = $props();
 
@@ -49,9 +49,9 @@
       isOpen = !isOpen;
     } else {
       if (!isOpen) {
-        isOpen = dragOffset > width * 0.25;
+        isOpen = dragOffset > width * 0.28;
       } else {
-        isOpen = dragOffset >= width * 0.75;
+        isOpen = dragOffset >= width * 0.72;
       }
     }
     dragOffset = 0;
@@ -84,6 +84,7 @@
     };
   }
 
+  // Fluid transform and dynamic drag calculations
   let translateX = $derived.by(() => {
     if (isDragging) {
       const hiddenPx = width - dragOffset;
@@ -94,9 +95,17 @@
 
   let backdropOpacity = $derived.by(() => {
     if (isDragging) {
-      return (dragOffset / width) * 0.6;
+      return (dragOffset / width) * 0.65;
     }
-    return isOpen ? 0.6 : 0;
+    return isOpen ? 0.65 : 0;
+  });
+
+  // Dynamic glass refraction blur based on open progress
+  let dynamicBlur = $derived.by(() => {
+    if (isDragging) {
+      return `${Math.max(4, Math.round((dragOffset / width) * 24))}px`;
+    }
+    return isOpen ? '24px' : '0px';
   });
 </script>
 
@@ -106,94 +115,124 @@
   }}
 />
 
-<!-- 🌟 RIGHT EDGE LIQUID GLASS HANDLE PADDLE 🌟 -->
+<!-- 🌟 FLOATING LIQUID GLASS PULL PADDLE 🌟 -->
 {#if !isOpen}
   <button
     type="button"
     aria-label="Open Quick Hub"
-    class="group fixed top-1/2 -translate-y-1/2 right-0 z-30 h-20 w-7 rounded-l-2xl border-y border-l border-white/20 dark:border-white/15 bg-white/70 dark:bg-[#12131a]/75 backdrop-blur-xl shadow-[-8px_0_24px_-4px_rgba(0,0,0,0.25)] flex flex-col items-center justify-center gap-1 cursor-pointer touch-none active:scale-95 hover:w-9 transition-all duration-200 overflow-hidden"
+    class="group fixed top-1/2 -translate-y-1/2 right-0 z-30 h-24 w-8 rounded-l-2xl border-y border-l border-white/30 dark:border-white/20 bg-white/70 dark:bg-[#0c0d16]/70 backdrop-blur-xl shadow-[-12px_0_30px_-6px_rgba(0,0,0,0.35)] flex flex-col items-center justify-center gap-1.5 cursor-pointer touch-none active:scale-90 hover:w-10 transition-all duration-300 overflow-hidden"
     onclick={() => (isOpen = true)}
     ontouchstart={handleTouchStart}
     ontouchmove={handleTouchMove}
     ontouchend={handleTouchEnd}
     ontouchcancel={handleTouchEnd}
   >
-    <!-- Left Specular Neon Lip -->
+    <!-- Caustic Neon Rim Highlight -->
     <div 
-      class="absolute left-0 top-0 bottom-0 w-[2px] opacity-80 group-hover:opacity-100 transition-opacity"
-      style="background: linear-gradient(180deg, transparent 10%, {themeColor} 50%, transparent 90%);"
+      class="absolute left-0 top-0 bottom-0 w-[2.5px] opacity-80 group-hover:opacity-100 transition-opacity"
+      style="background: linear-gradient(180deg, transparent 5%, {themeColor} 45%, color-mix(in srgb, {themeColor} 40%, white) 55%, transparent 95%); box-shadow: 0 0 10px {themeColor};"
     ></div>
 
-    <!-- Active Hover Glow Aura -->
+    <!-- Soft Ambient Light Beacon -->
     <div 
-      class="absolute inset-0 opacity-0 group-hover:opacity-20 transition-opacity duration-300 pointer-events-none"
-      style="background: radial-gradient(circle at center, {themeColor} 0%, transparent 75%);"
+      class="absolute inset-0 opacity-0 group-hover:opacity-30 transition-opacity duration-300 pointer-events-none"
+      style="background: radial-gradient(circle at right center, {themeColor} 0%, transparent 80%);"
     ></div>
 
-    <!-- Directional Glyph -->
+    <!-- Directional Icon with Spring Hop -->
     <ChevronLeft 
-      size={14} 
-      strokeWidth={2.5} 
-      class="text-neutral-500 dark:text-white/60 group-hover:text-neutral-900 dark:group-hover:text-white group-hover:-translate-x-0.5 transition-all duration-150" 
+      size={15} 
+      strokeWidth={3} 
+      class="text-neutral-600 dark:text-white/70 group-hover:text-neutral-950 dark:group-hover:text-white group-hover:-translate-x-1 transition-transform duration-200" 
     />
 
-    <!-- Grip Pill Indicator -->
-    <div class="w-1 h-3 rounded-full bg-neutral-400 dark:bg-white/30 group-hover:bg-[var(--hub-accent)] transition-colors" style="--hub-accent: {themeColor};"></div>
+    <!-- Luminescent Touch Bead -->
+    <div 
+      class="w-1.5 h-3.5 rounded-full transition-all duration-300 group-hover:h-5 shadow-[0_0_8px_var(--glow)]" 
+      style="--glow: {themeColor}; background-color: {themeColor};"
+    ></div>
   </button>
 {/if}
 
 <!-- 🌟 FROSTED AMBIENT BACKDROP 🌟 -->
 <div
-  class="fixed inset-0 bg-black/40 backdrop-blur-xs z-40 transition-opacity select-none touch-none"
+  class="fixed inset-0 bg-black/45 z-40 transition-all select-none touch-none"
   style="
     opacity: {backdropOpacity};
+    backdrop-filter: blur({dynamicBlur});
+    -webkit-backdrop-filter: blur({dynamicBlur});
     pointer-events: {isOpen || isDragging ? 'auto' : 'none'};
-    transition-duration: {isDragging ? '0ms' : '240ms'};
+    transition-duration: {isDragging ? '0ms' : '360ms'};
+    transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
   "
   onclick={() => (isOpen = false)}
   aria-hidden="true"
 ></div>
 
-<!-- 🌟 SLIDE-OUT VISIONOS GLASS DRAWER PANEL 🌟 -->
+<!-- 🌟 VISIONOS LIQUID GLASS DRAWER 🌟 -->
 <aside
-  class="fixed top-0 right-0 h-full bg-white/80 dark:bg-[#0c0d14]/85 backdrop-blur-2xl backdrop-saturate-[190%] border-l border-black/10 dark:border-white/10 shadow-[-20px_0_60px_-15px_rgba(0,0,0,0.5)] z-50 flex flex-col will-change-transform select-none overflow-hidden"
+  class="fixed top-0 right-0 h-full z-50 flex flex-col will-change-transform select-none overflow-hidden border-l border-white/20 dark:border-white/10"
   style="
-    width: min({width}px, 88vw);
+    width: min({width}px, 90vw);
     transform: translateX({translateX});
-    transition: {isDragging ? 'none' : 'transform 260ms cubic-bezier(0.16, 1, 0.3, 1)'};
+    background: color-mix(in srgb, var(--bg-base, #0c0d14) 82%, transparent);
+    backdrop-filter: blur(36px) saturate(210%);
+    -webkit-backdrop-filter: blur(36px) saturate(210%);
+    box-shadow: -28px 0 80px -15px rgba(0, 0, 0, 0.65), inset 1px 0 0 0 rgba(255, 255, 255, 0.12);
+    transition: {isDragging ? 'none' : 'transform 380ms cubic-bezier(0.32, 0.72, 0, 1)'};
   "
 >
-  <!-- Specular Left Edge Neon Strip -->
+  <!-- 🌟 CAUSTIC GLASS SPECULAR EDGE (Animated Shimmer on Open) 🌟 -->
   <div 
-    class="pointer-events-none absolute left-0 top-0 bottom-0 w-[2px] opacity-70 z-30"
-    style="background: linear-gradient(180deg, transparent 5%, {themeColor} 30%, color-mix(in srgb, {themeColor} 50%, white) 70%, transparent 95%);"
-  ></div>
+    class="pointer-events-none absolute left-0 top-0 bottom-0 w-[2px] z-30 overflow-hidden"
+  >
+    <div 
+      class="w-full h-full"
+      style="background: linear-gradient(180deg, transparent 0%, {themeColor} 30%, color-mix(in srgb, {themeColor} 60%, white) 50%, {themeColor} 70%, transparent 100%);"
+    ></div>
+    <!-- Moving specular light glint -->
+    <div 
+      class="absolute inset-x-0 w-full h-32 bg-gradient-to-b from-transparent via-white to-transparent opacity-80 animate-shimmer"
+      style="animation: glassSweep 3.5s ease-in-out infinite;"
+    ></div>
+  </div>
 
-  <!-- Top Ambient Glow Bleed -->
+  <!-- Inner Ambient Volumetric Light Orbs -->
   <div 
-    class="pointer-events-none absolute -top-24 right-0 w-64 h-64 rounded-full blur-[80px] opacity-20 -z-10"
+    class="pointer-events-none absolute -top-32 -right-32 w-80 h-80 rounded-full blur-[100px] opacity-25 -z-10"
+    style="background: radial-gradient(circle at center, {themeColor} 0%, transparent 70%);"
+  ></div>
+  <div 
+    class="pointer-events-none absolute -bottom-32 -left-32 w-72 h-72 rounded-full blur-[90px] opacity-15 -z-10"
     style="background: radial-gradient(circle at center, {themeColor} 0%, transparent 70%);"
   ></div>
 
-  <!-- Header / Drag-to-Dismiss Bar -->
+  <!-- Header / Drag-to-Dismiss Zone -->
   <div 
-    class="flex flex-col border-b border-black/[0.06] dark:border-white/[0.08] bg-white/40 dark:bg-white/[0.03] shrink-0 touch-none cursor-grab active:cursor-grabbing"
+    class="flex flex-col border-b border-black/[0.06] dark:border-white/[0.08] bg-white/40 dark:bg-white/[0.02] shrink-0 touch-none cursor-grab active:cursor-grabbing relative z-20 backdrop-blur-md"
     use:dragHeader
   >
-    <!-- Centered Tactile Drag Handle Pill -->
-    <div class="w-full flex justify-center pt-2 pb-0.5">
-      <div class="w-10 h-1 rounded-full bg-neutral-300 dark:bg-white/20"></div>
+    <!-- Tactile Elastic Pull Bar Indicator -->
+    <div class="w-full flex justify-center pt-2.5 pb-1">
+      <div class="w-12 h-1 rounded-full bg-neutral-300 dark:bg-white/20 transition-all duration-200 hover:bg-neutral-400 dark:hover:bg-white/40"></div>
     </div>
 
-    <div class="flex items-center justify-between px-4 pb-3 pt-1">
-      <div class="flex items-center gap-2">
-        <span 
-          class="w-2 h-2 rounded-full" 
-          style="background-color: {themeColor}; box-shadow: 0 0 8px {themeColor};"
-        ></span>
-        <span class="text-xs font-mono font-black text-neutral-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
-          <span>Quick Hub</span>
-        </span>
+    <div class="flex items-center justify-between px-5 pb-3.5 pt-1">
+      <div class="flex items-center gap-2.5">
+        <div 
+          class="relative flex items-center justify-center w-6 h-6 rounded-lg border border-white/20 shadow-xs"
+          style="background: color-mix(in srgb, {themeColor} 20%, transparent);"
+        >
+          <Sparkles size={13} style="color: {themeColor};" />
+        </div>
+        <div class="flex flex-col leading-none">
+          <span class="text-xs font-mono font-black text-neutral-900 dark:text-white uppercase tracking-wider">
+            Quick Hub
+          </span>
+          <span class="text-[9px] font-mono text-[var(--text-muted)] tracking-widest uppercase mt-0.5">
+            Active Cockpit
+          </span>
+        </div>
       </div>
 
       <button
@@ -207,9 +246,14 @@
     </div>
   </div>
 
-  <!-- Scrollable Panel Body -->
+  <!-- Scrollable Panel Body with Staggered Slide-In -->
   <div 
-    class="flex-1 overflow-y-auto overscroll-contain p-4 space-y-4 text-xs touch-pan-y no-scrollbar"
+    class="flex-1 overflow-y-auto overscroll-contain p-5 space-y-4 text-xs touch-pan-y no-scrollbar relative z-10 transition-all duration-500"
+    style="
+      opacity: {isOpen ? 1 : 0};
+      transform: {isOpen ? 'none' : 'translateX(12px) scale(0.98)'};
+      transition-delay: {isOpen ? '80ms' : '0ms'};
+    "
     role="region"
     aria-label="Quick panel content"
     use:isolateTouchScroll
@@ -217,3 +261,11 @@
     {@render children?.()}
   </div>
 </aside>
+
+<style>
+  @keyframes glassSweep {
+    0% { transform: translateY(-100%); }
+    50% { transform: translateY(120%); }
+    100% { transform: translateY(120%); }
+  }
+</style>

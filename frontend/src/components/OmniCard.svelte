@@ -66,7 +66,10 @@
 
   let isCopied = $state(false);
   let isSpeaking = $state(false);
-  let audioDuration = $state(item.audio_duration || 0);
+  let audioDuration = $state(0);
+  $effect(() => {
+    audioDuration = item.audio_duration || 0;
+  });
 
   // 🌟 ROBUST MEDIA LOADING STATE 🌟
   // Only track changes to the link string itself, avoiding re-triggers on audio duration changes
