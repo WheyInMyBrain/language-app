@@ -34,6 +34,56 @@ export default {
     speaking_hours: 12
   },
 
+  momentum: {
+    listening: {
+      floor: 20,       // Minimum target during recovery / travel slumps (mins)
+      baseline: 45,    // Standard nominal target (mins)
+      ceiling: 90,     // Maximum cap during flow state (mins)
+      halfLifeDays: 2.5,
+      maxSlewRate: 15
+    },
+    speaking: {
+      floor: 5,        // Recovery floor (mins)
+      baseline: 10,    // Standard nominal target (mins)
+      ceiling: 25,     // Maximum cap (mins)
+      halfLifeDays: 2.5,
+      maxSlewRate: 5
+    },
+    vocab: {
+      floor: 2,        // Minimum baseline when exhausted (words)
+      baseline: 5,     // Standard nominal target (words)
+      ceiling: 10,     // 🌟 HARD CEILING (never more than 10 words)
+      halfLifeDays: 2.5,
+      maxSlewRate: 2
+    },
+
+    // 🌟 TRI-DECK SRS PACING BOUNDARIES (Cards/Day) 🌟
+    srs: {
+      vision: {
+        floor: 10,     // Slump / recovery floor
+        baseline: 20,  // Standard nominal daily quota
+        ceiling: 35    // Flow surge maximum
+      },
+      listen: {
+        floor: 5,      // Slump / recovery floor
+        baseline: 10,  // Standard nominal daily quota
+        ceiling: 20    // Flow surge maximum
+      },
+      write: {
+        floor: 1,      // Minimal motor requirement
+        baseline: 3,   // Standard calligraphy practice
+        ceiling: 5     // Strict bound to prevent wrist fatigue
+      }
+    },
+
+    // 🌟 DAY-PAGE REVISION DISPATCH PACING (Days/Day) 🌟
+    revisions: {
+      floor: 1,        // Always prioritize exactly 1 anchor day (Pass 0/1 first)
+      baseline: 1,     // Standard comfortable deep revision
+      ceiling: 2       // High-flow limit (max 2 past days in one sitting)
+    }
+  },
+
   colors: {
     theme: { dark_primary: '#c084fc', light_primary: '#7e22ce', primary: '#a855f7' },
     streak: { dark_primary: '#fb7185', light_primary: '#e11d48', primary: '#f43f5e' },

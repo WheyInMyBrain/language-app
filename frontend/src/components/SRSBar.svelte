@@ -1,6 +1,7 @@
 <!-- frontend/src/components/SRSBar.svelte -->
 <script>
   import { onMount } from 'svelte';
+  import { metadataStore } from '../lib/stores/metadata.svelte.js';
   import { activeLanguage } from '../lib/stores/activeLanguage.svelte.js';
   import { getIntervalPreview } from '../lib/srsEngine.js';
 
@@ -155,6 +156,18 @@
 
     try {
       if (onReview) await onReview(grade);
+
+      const langCode = metadataStore.activeLanguage || 'zh-CN';
+      const today = new Date().toISOString().slice(0, 10);
+
+      // 1. Audit the day document that was reviewed
+      if (activeDate) {
+        metadataStore.refreshDayTotals(langCode, activeDate);
+      }
+
+      // 2. Silently record today's day_revisions increment in calendar_index
+      metadataStore.recordReview(langCode, today, 'day_revision');
+
       statusMessage = 'Saved';
       setTimeout(() => {
         statusMessage = '';

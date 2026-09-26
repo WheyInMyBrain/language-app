@@ -6,6 +6,7 @@
   import { VideoTimerService } from '../lib/services/videoTimerService.js';
   import { canonicalizeVideoUrl } from '../lib/mediaResolver.js';
   import { fetchYouTubeDuration } from '../lib/services/youtubeDurationFetcher.js';
+  import { getAllAdaptiveGoals } from '../lib/services/momentumEngine.js';
 
   // Razor-sharp vector icons
   import { 
@@ -59,6 +60,11 @@
   let isHovered = $state(false);
 
   let isCompact = $derived(isScrolledPast && !isManuallyOpened);
+
+  // 🌟 Dynamic Targets Computed via momentumEngine 🌟
+  let dynamicGoals = $derived.by(() => {
+    return getAllAdaptiveGoals();
+  });
 
   // --- 1. VOCAB STATES ---
   let vLink = $state('');
@@ -138,7 +144,7 @@
 
   let hudStats = $derived.by(() => {
     if (activeTab === 'vocab') {
-      const target = goals.vocab || 10;
+      const target = dynamicGoals.vocab?.target || goals.vocab || 10;
       const count = words.length;
       const pct = target > 0 ? Math.min(100, Math.round((count / target) * 100)) : 0;
       return { count: `${count}/${target}`, pct, label: 'words' };
@@ -150,7 +156,7 @@
       return { count: `${count}/${target}`, pct, label: 'vids' };
     }
     if (activeTab === 'listening') {
-      const targetMins = goals.listening_minutes || goals.listening || 45;
+      const targetMins = dynamicGoals.listening?.target || goals.listening_minutes || goals.listening || 45;
       const totalSec = listeningActivities.reduce((acc, it) => acc + (it.link_duration || it.durationSec || 0), 0);
       const curMins = Math.floor(totalSec / 60);
       const pct = targetMins > 0 ? Math.min(100, Math.round((curMins / targetMins) * 100)) : 0;
@@ -406,7 +412,6 @@
           statusMessage = '⚠️ Enter video URL';
           return;
         }
-        // 🌟 Uses VideoTimerService to build robust payload with link_duration 🌟
         const payload = VideoTimerService.createActivityPayload({
           link: cleanUrl,
           durationInput: ciDuration
@@ -428,7 +433,6 @@
           statusMessage = '⚠️ Enter link or minutes';
           return;
         }
-        // 🌟 Uses VideoTimerService to build robust payload with link_duration 🌟
         const payload = VideoTimerService.createActivityPayload({
           link: cleanUrl,
           durationInput: listDuration

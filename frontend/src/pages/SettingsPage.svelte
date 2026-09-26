@@ -17,8 +17,18 @@
     Clock, 
     Zap, 
     RefreshCw,
-    CloudCheck,
-    CloudUpload
+    CloudUpload,
+    Activity,
+    TrendingDown,
+    Flame,
+    ShieldAlert,
+    Layers,
+    Eye,
+    Headphones,
+    PenTool,
+    RotateCcw,
+    Plus,
+    Minus
   } from '@lucide/svelte';
 
   let currentLang = $derived(
@@ -33,6 +43,19 @@
     grammar: 1,
     listening_minutes: 45,
     speaking_minutes: 10
+  });
+
+  // 🌟 Full Kinetic Momentum State (Immersion + SRS + Revisions) 🌟
+  let momentum = $state({
+    listening: { floor: 20, baseline: 45, ceiling: 90 },
+    speaking: { floor: 5, baseline: 10, ceiling: 25 },
+    vocab: { floor: 2, baseline: 5, ceiling: 10 },
+    srs: {
+      vision: { floor: 10, baseline: 20, ceiling: 35 },
+      listen: { floor: 5, baseline: 10, ceiling: 20 },
+      write: { floor: 1, baseline: 3, ceiling: 5 }
+    },
+    revisions: { floor: 1, baseline: 1, ceiling: 2 }
   });
 
   let colors = $state({
@@ -61,13 +84,11 @@
     { name: 'Amber Forge', hex: '#f59e0b' }
   ];
 
-  // Notification UI states
   let isPushEnabled = $state(notificationService.isEnabled);
   let notifStatusMsg = $state('');
   let isTogglingNotif = $state(false);
   let reminderHour = $state(19);
 
-  // Backup trigger state
   let isBackingUp = $state(false);
   let backupStatus = $state('');
 
@@ -87,6 +108,49 @@
           speaking_minutes: lang.goals.speaking_minutes ?? 10
         };
       }
+
+      // Ingest momentum config from language profile / Yjs
+      const mom = lang.momentum || {};
+      momentum = {
+        listening: {
+          floor: mom.listening?.floor ?? 20,
+          baseline: mom.listening?.baseline ?? (lang.goals?.listening_minutes ?? 45),
+          ceiling: mom.listening?.ceiling ?? 90
+        },
+        speaking: {
+          floor: mom.speaking?.floor ?? 5,
+          baseline: mom.speaking?.baseline ?? (lang.goals?.speaking_minutes ?? 10),
+          ceiling: mom.speaking?.ceiling ?? 25
+        },
+        vocab: {
+          floor: mom.vocab?.floor ?? 2,
+          baseline: mom.vocab?.baseline ?? 5,
+          ceiling: Math.min(10, mom.vocab?.ceiling ?? 10) // Strict invariant: max 10
+        },
+        srs: {
+          vision: {
+            floor: mom.srs?.vision?.floor ?? 10,
+            baseline: mom.srs?.vision?.baseline ?? 20,
+            ceiling: mom.srs?.vision?.ceiling ?? 35
+          },
+          listen: {
+            floor: mom.srs?.listen?.floor ?? 5,
+            baseline: mom.srs?.listen?.baseline ?? 10,
+            ceiling: mom.srs?.listen?.ceiling ?? 20
+          },
+          write: {
+            floor: mom.srs?.write?.floor ?? 1,
+            baseline: mom.srs?.write?.baseline ?? 3,
+            ceiling: mom.srs?.write?.ceiling ?? 5
+          }
+        },
+        revisions: {
+          floor: mom.revisions?.floor ?? 1,
+          baseline: mom.revisions?.baseline ?? 1,
+          ceiling: mom.revisions?.ceiling ?? 2
+        }
+      };
+
       if (lang.colors) {
         colors = JSON.parse(JSON.stringify(lang.colors));
       }
@@ -96,7 +160,7 @@
       if (lang.tones) {
         tones = JSON.parse(JSON.stringify(lang.tones));
       }
-      // Allow initial load to finish without triggering an auto-save
+
       setTimeout(() => {
         isInitialLoad = false;
       }, 50);
@@ -110,9 +174,18 @@
     syncState = 'saving';
     if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
 
+    // Keep legacy goals in sync with momentum baselines
+    goals.listening_minutes = momentum.listening.baseline;
+    goals.speaking_minutes = momentum.speaking.baseline;
+
     const commitSave = () => {
+      // Invariant: Vocab ceiling can never exceed 10
+      if (momentum.vocab.ceiling > 10) momentum.vocab.ceiling = 10;
+      if (momentum.vocab.baseline > 10) momentum.vocab.baseline = 10;
+
       metadataStore.updateLanguageConfig(metadataStore.activeLanguage, {
         goals: $state.snapshot(goals),
+        momentum: $state.snapshot(momentum),
         colors: $state.snapshot(colors),
         tones: $state.snapshot(tones)
       });
@@ -127,6 +200,13 @@
     } else {
       saveDebounceTimer = setTimeout(commitSave, 400);
     }
+  }
+
+  function adjustValue(obj, key, delta, min = 0, max = Infinity, step = 1) {
+    const cur = Number(obj[key] ?? 0);
+    const next = Math.max(min, Math.min(max, cur + (delta * step)));
+    obj[key] = next;
+    triggerAutoSave();
   }
 
   function setThemePreset(hex) {
@@ -325,7 +405,423 @@
     </div>
   </section>
 
-  <!-- SECTION 2: DAILY HABIT TARGETS -->
+  <!-- 🌟 SECTION 2: ADAPTIVE KINETIC MOMENTUM CONTROLLER (Immersion) 🌟 -->
+  <section class="relative p-6 rounded-3xl border border-[var(--border-card)] bg-[var(--bg-surface)]/85 shadow-sm space-y-6 backdrop-blur-xl z-10">
+    <div class="flex items-center justify-between border-b border-[var(--border-subtle)] pb-4">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400">
+          <Activity size={16} strokeWidth={2.5} />
+        </div>
+        <div>
+          <h2 class="text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">
+            Kinetic Momentum Tuning (Immersion Output)
+          </h2>
+          <p class="text-[11px] text-[var(--text-muted)]">
+            Calibrates the 7-day adaptive EMA: scales targets during slumps vs. flow states, with zero debt rollover
+          </p>
+        </div>
+      </div>
+
+      <span class="text-[10px] font-mono font-bold px-2.5 py-1 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-300">
+        7d Half-Life: 2.5d
+      </span>
+    </div>
+
+    <!-- Tri-Metric Momentum Grid -->
+    <div class="space-y-4">
+      
+      <!-- 1. Listening Immersion Row -->
+      <div class="p-4 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-card)] space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-orange-400 shadow-[0_0_8px_#fb923c]"></span>
+            <span class="text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider">Listening Immersion</span>
+          </div>
+          <span class="text-[10px] font-mono text-[var(--text-muted)]">Step: 5m • Max shift/day: ±15m</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <!-- Floor -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <div class="space-y-0.5">
+              <span class="text-[9px] font-mono font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1">
+                <TrendingDown size={11} /> Floor (Recovery)
+              </span>
+              <p class="text-[9px] text-[var(--text-muted)]">Slump minimum</p>
+            </div>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.listening, 'floor', -1, 5, momentum.listening.baseline, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min="5" max={momentum.listening.baseline} step="5" bind:value={momentum.listening.floor} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.listening, 'floor', 1, 5, momentum.listening.baseline, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">m</span>
+            </div>
+          </div>
+
+          <!-- Baseline -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-orange-500/40 flex items-center justify-between shadow-xs">
+            <div class="space-y-0.5">
+              <span class="text-[9px] font-mono font-bold uppercase tracking-wider text-orange-400 flex items-center gap-1">
+                <Target size={11} /> Baseline (Anchor)
+              </span>
+              <p class="text-[9px] text-[var(--text-muted)]">Standard daily goal</p>
+            </div>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.listening, 'baseline', -1, momentum.listening.floor, momentum.listening.ceiling, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-orange-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-orange-400 cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.listening.floor} max={momentum.listening.ceiling} step="5" bind:value={momentum.listening.baseline} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-orange-400 outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.listening, 'baseline', 1, momentum.listening.floor, momentum.listening.ceiling, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-orange-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-orange-400 cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">m</span>
+            </div>
+          </div>
+
+          <!-- Ceiling -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <div class="space-y-0.5">
+              <span class="text-[9px] font-mono font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                <Flame size={11} /> Ceiling (Overdrive)
+              </span>
+              <p class="text-[9px] text-[var(--text-muted)]">Maximum safe cap</p>
+            </div>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.listening, 'ceiling', -1, momentum.listening.baseline, 300, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.listening.baseline} max="300" step="5" bind:value={momentum.listening.ceiling} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.listening, 'ceiling', 1, momentum.listening.baseline, 300, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">m</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Speaking Time Row -->
+      <div class="p-4 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-card)] space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-pink-400 shadow-[0_0_8px_#f472b6]"></span>
+            <span class="text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider">Speaking Output</span>
+          </div>
+          <span class="text-[10px] font-mono text-[var(--text-muted)]">Step: 5m • Max shift/day: ±5m</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <!-- Floor -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <div class="space-y-0.5">
+              <span class="text-[9px] font-mono font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1">
+                <TrendingDown size={11} /> Floor
+              </span>
+              <p class="text-[9px] text-[var(--text-muted)]">Slump minimum</p>
+            </div>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.speaking, 'floor', -1, 1, momentum.speaking.baseline, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min="1" max={momentum.speaking.baseline} step="5" bind:value={momentum.speaking.floor} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.speaking, 'floor', 1, 1, momentum.speaking.baseline, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">m</span>
+            </div>
+          </div>
+
+          <!-- Baseline -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-pink-500/40 flex items-center justify-between shadow-xs">
+            <div class="space-y-0.5">
+              <span class="text-[9px] font-mono font-bold uppercase tracking-wider text-pink-400 flex items-center gap-1">
+                <Target size={11} /> Baseline
+              </span>
+              <p class="text-[9px] text-[var(--text-muted)]">Standard daily goal</p>
+            </div>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.speaking, 'baseline', -1, momentum.speaking.floor, momentum.speaking.ceiling, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-pink-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-pink-400 cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.speaking.floor} max={momentum.speaking.ceiling} step="5" bind:value={momentum.speaking.baseline} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-pink-400 outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.speaking, 'baseline', 1, momentum.speaking.floor, momentum.speaking.ceiling, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-pink-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-pink-400 cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">m</span>
+            </div>
+          </div>
+
+          <!-- Ceiling -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <div class="space-y-0.5">
+              <span class="text-[9px] font-mono font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                <Flame size={11} /> Ceiling
+              </span>
+              <p class="text-[9px] text-[var(--text-muted)]">Overdrive max cap</p>
+            </div>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.speaking, 'ceiling', -1, momentum.speaking.baseline, 120, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.speaking.baseline} max="120" step="5" bind:value={momentum.speaking.ceiling} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.speaking, 'ceiling', 1, momentum.speaking.baseline, 120, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">m</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Vocabulary Input Row -->
+      <div class="p-4 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-card)] space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]"></span>
+            <span class="text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider">Vocabulary Expansion</span>
+          </div>
+          <span class="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20 font-bold">
+            <ShieldAlert size={11} /> Invariant: Hard Ceiling ≤ 10
+          </span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <!-- Floor -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <div class="space-y-0.5">
+              <span class="text-[9px] font-mono font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1">
+                <TrendingDown size={11} /> Floor
+              </span>
+              <p class="text-[9px] text-[var(--text-muted)]">Travel / low energy</p>
+            </div>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.vocab, 'floor', -1, 1, momentum.vocab.baseline, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min="1" max={momentum.vocab.baseline} step="1" bind:value={momentum.vocab.floor} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.vocab, 'floor', 1, 1, momentum.vocab.baseline, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">w</span>
+            </div>
+          </div>
+
+          <!-- Baseline -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-emerald-500/40 flex items-center justify-between shadow-xs">
+            <div class="space-y-0.5">
+              <span class="text-[9px] font-mono font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                <Target size={11} /> Baseline
+              </span>
+              <p class="text-[9px] text-[var(--text-muted)]">Standard daily pace</p>
+            </div>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.vocab, 'baseline', -1, momentum.vocab.floor, momentum.vocab.ceiling, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-emerald-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-emerald-400 cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.vocab.floor} max={momentum.vocab.ceiling} step="1" bind:value={momentum.vocab.baseline} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-emerald-400 outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.vocab, 'baseline', 1, momentum.vocab.floor, momentum.vocab.ceiling, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-emerald-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-emerald-400 cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">w</span>
+            </div>
+          </div>
+
+          <!-- Ceiling -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <div class="space-y-0.5">
+              <span class="text-[9px] font-mono font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                <Flame size={11} /> Hard Ceiling
+              </span>
+              <p class="text-[9px] text-[var(--text-muted)]">Absolute upper limit</p>
+            </div>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.vocab, 'ceiling', -1, momentum.vocab.baseline, 10, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.vocab.baseline} max="10" step="1" bind:value={momentum.vocab.ceiling} oninput={() => { if (momentum.vocab.ceiling > 10) momentum.vocab.ceiling = 10; triggerAutoSave(); }} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.vocab, 'ceiling', 1, momentum.vocab.baseline, 10, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">w</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 🌟 SECTION 3: TRI-DECK SRS PACING & REVIEW DISPATCH 🌟 -->
+  <section class="relative p-6 rounded-3xl border border-[var(--border-card)] bg-[var(--bg-surface)]/85 shadow-sm space-y-6 backdrop-blur-xl z-10">
+    <div class="flex items-center justify-between border-b border-[var(--border-subtle)] pb-4">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-xl bg-pink-500/15 border border-pink-500/30 flex items-center justify-center text-pink-400">
+          <Layers size={16} strokeWidth={2.5} />
+        </div>
+        <div>
+          <h2 class="text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">
+            SRS Decompression & Paced Slices
+          </h2>
+          <p class="text-[11px] text-[var(--text-muted)]">
+            Tuned review batch quotas for each deck to prevent card avalanche while keeping full mathematical queue fidelity
+          </p>
+        </div>
+      </div>
+
+      <span class="text-[10px] font-mono font-bold px-2.5 py-1 rounded-full bg-pink-500/15 border border-pink-500/30 text-pink-300">
+        Adaptive Quotas
+      </span>
+    </div>
+
+    <div class="space-y-4">
+      
+      <!-- 1. Vision Deck -->
+      <div class="p-4 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-card)] space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <Eye size={14} class="text-rose-400" />
+            <span class="text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider">Vision Flashcards (Recognition)</span>
+          </div>
+          <span class="text-[10px] font-mono text-[var(--text-muted)]">Cards / day</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <!-- Floor -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <span class="text-[9px] font-mono font-bold uppercase text-amber-400">Floor</span>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.srs.vision, 'floor', -1, 5, momentum.srs.vision.baseline, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min="5" max={momentum.srs.vision.baseline} step="5" bind:value={momentum.srs.vision.floor} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.srs.vision, 'floor', 1, 5, momentum.srs.vision.baseline, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">cards</span>
+            </div>
+          </div>
+          <!-- Baseline -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-rose-500/40 flex items-center justify-between shadow-xs">
+            <span class="text-[9px] font-mono font-bold uppercase text-rose-400">Baseline</span>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.srs.vision, 'baseline', -1, momentum.srs.vision.floor, momentum.srs.vision.ceiling, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-rose-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-rose-400 cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.srs.vision.floor} max={momentum.srs.vision.ceiling} step="5" bind:value={momentum.srs.vision.baseline} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-rose-400 outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.srs.vision, 'baseline', 1, momentum.srs.vision.floor, momentum.srs.vision.ceiling, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-rose-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-rose-400 cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">cards</span>
+            </div>
+          </div>
+          <!-- Ceiling -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <span class="text-[9px] font-mono font-bold uppercase text-emerald-400">Ceiling</span>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.srs.vision, 'ceiling', -1, momentum.srs.vision.baseline, 100, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.srs.vision.baseline} max="100" step="5" bind:value={momentum.srs.vision.ceiling} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.srs.vision, 'ceiling', 1, momentum.srs.vision.baseline, 100, 5)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">cards</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Listening Deck -->
+      <div class="p-4 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-card)] space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <Headphones size={14} class="text-orange-400" />
+            <span class="text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider">Listening Deck (Ear Training)</span>
+          </div>
+          <span class="text-[10px] font-mono text-[var(--text-muted)]">Cards / day</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <!-- Floor -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <span class="text-[9px] font-mono font-bold uppercase text-amber-400">Floor</span>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.srs.listen, 'floor', -1, 2, momentum.srs.listen.baseline, 2)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min="2" max={momentum.srs.listen.baseline} step="2" bind:value={momentum.srs.listen.floor} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.srs.listen, 'floor', 1, 2, momentum.srs.listen.baseline, 2)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">cards</span>
+            </div>
+          </div>
+          <!-- Baseline -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-orange-500/40 flex items-center justify-between shadow-xs">
+            <span class="text-[9px] font-mono font-bold uppercase text-orange-400">Baseline</span>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.srs.listen, 'baseline', -1, momentum.srs.listen.floor, momentum.srs.listen.ceiling, 2)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-orange-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-orange-400 cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.srs.listen.floor} max={momentum.srs.listen.ceiling} step="2" bind:value={momentum.srs.listen.baseline} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-orange-400 outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.srs.listen, 'baseline', 1, momentum.srs.listen.floor, momentum.srs.listen.ceiling, 2)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-orange-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-orange-400 cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">cards</span>
+            </div>
+          </div>
+          <!-- Ceiling -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <span class="text-[9px] font-mono font-bold uppercase text-emerald-400">Ceiling</span>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.srs.listen, 'ceiling', -1, momentum.srs.listen.baseline, 60, 2)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.srs.listen.baseline} max="60" step="2" bind:value={momentum.srs.listen.ceiling} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.srs.listen, 'ceiling', 1, momentum.srs.listen.baseline, 60, 2)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">cards</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Writing Deck -->
+      <div class="p-4 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-card)] space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <PenTool size={14} class="text-purple-400" />
+            <span class="text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider">Writing Deck (Motor Stroke Practice)</span>
+          </div>
+          <span class="text-[10px] font-mono text-[var(--text-muted)]">Cards / day (wrist preservation)</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <!-- Floor -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <span class="text-[9px] font-mono font-bold uppercase text-amber-400">Floor</span>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.srs.write, 'floor', -1, 1, momentum.srs.write.baseline, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min="1" max={momentum.srs.write.baseline} step="1" bind:value={momentum.srs.write.floor} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.srs.write, 'floor', 1, 1, momentum.srs.write.baseline, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">cards</span>
+            </div>
+          </div>
+          <!-- Baseline -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-purple-500/40 flex items-center justify-between shadow-xs">
+            <span class="text-[9px] font-mono font-bold uppercase text-purple-400">Baseline</span>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.srs.write, 'baseline', -1, momentum.srs.write.floor, momentum.srs.write.ceiling, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-purple-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-purple-400 cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.srs.write.floor} max={momentum.srs.write.ceiling} step="1" bind:value={momentum.srs.write.baseline} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-purple-400 outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.srs.write, 'baseline', 1, momentum.srs.write.floor, momentum.srs.write.ceiling, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-purple-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-purple-400 cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">cards</span>
+            </div>
+          </div>
+          <!-- Ceiling -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <span class="text-[9px] font-mono font-bold uppercase text-emerald-400">Ceiling</span>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.srs.write, 'ceiling', -1, momentum.srs.write.baseline, 15, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.srs.write.baseline} max="15" step="1" bind:value={momentum.srs.write.ceiling} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.srs.write, 'ceiling', 1, momentum.srs.write.baseline, 15, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">cards</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. Day Page Revisions -->
+      <div class="p-4 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-card)] space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <RotateCcw size={14} class="text-rose-400" />
+            <span class="text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider">Day Page Revision Dispatch</span>
+          </div>
+          <span class="text-[10px] font-mono text-[var(--text-muted)]">Days / day (Pass 0/1 prioritized)</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <!-- Floor -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <span class="text-[9px] font-mono font-bold uppercase text-amber-400">Floor</span>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.revisions, 'floor', -1, 1, momentum.revisions.baseline, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min="1" max={momentum.revisions.baseline} step="1" bind:value={momentum.revisions.floor} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.revisions, 'floor', 1, 1, momentum.revisions.baseline, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">days</span>
+            </div>
+          </div>
+          <!-- Baseline -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-rose-500/40 flex items-center justify-between shadow-xs">
+            <span class="text-[9px] font-mono font-bold uppercase text-rose-400">Baseline</span>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.revisions, 'baseline', -1, momentum.revisions.floor, momentum.revisions.ceiling, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-rose-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-rose-400 cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.revisions.floor} max={momentum.revisions.ceiling} step="1" bind:value={momentum.revisions.baseline} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-rose-400 outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.revisions, 'baseline', 1, momentum.revisions.floor, momentum.revisions.ceiling, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-rose-500/30 flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-rose-400 cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">days</span>
+            </div>
+          </div>
+          <!-- Ceiling -->
+          <div class="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between">
+            <span class="text-[9px] font-mono font-bold uppercase text-emerald-400">Ceiling</span>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick={() => adjustValue(momentum.revisions, 'ceiling', -1, momentum.revisions.baseline, 5, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Minus size={10} /></button>
+              <input type="number" min={momentum.revisions.baseline} max="5" step="1" bind:value={momentum.revisions.ceiling} oninput={() => triggerAutoSave()} class="w-10 bg-transparent text-center font-mono font-black text-sm text-[var(--text-primary)] outline-none" />
+              <button type="button" onclick={() => adjustValue(momentum.revisions, 'ceiling', 1, momentum.revisions.baseline, 5, 1)} class="w-6 h-6 rounded-lg bg-[var(--bg-base)] border border-[var(--border-subtle)] flex items-center justify-center hover:bg-[var(--bg-surface-elevated)] active:scale-95 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><Plus size={10} /></button>
+              <span class="text-[10px] font-mono text-[var(--text-muted)] ml-1">days</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- SECTION 4: OTHER FIXED TARGETS (CI & Grammar) -->
   <section class="relative p-6 rounded-3xl border border-[var(--border-card)] bg-[var(--bg-surface)]/85 shadow-sm space-y-4 backdrop-blur-xl z-10">
     <div class="flex items-center gap-2.5 border-b border-[var(--border-subtle)] pb-4">
       <div class="w-8 h-8 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
@@ -333,70 +829,15 @@
       </div>
       <div>
         <h2 class="text-xs font-black uppercase tracking-wider text-[var(--text-primary)]">
-          Daily Activity Targets
+          Fixed Activity Targets
         </h2>
         <p class="text-[11px] text-[var(--text-muted)]">
-          Calibrates the 5 concentric Apple-style fitness rings on your today cockpit
+          Daily baseline goals for Comprehensible Input (CI) sessions and Grammar patterns
         </p>
       </div>
     </div>
 
-    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-1">
-      
-      <!-- Vocab -->
-      <div class="p-3.5 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-card)] space-y-1.5 focus-within:border-emerald-500 transition-colors">
-        <label for="goal-vocab" class="block text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">
-          Vocab Goal
-        </label>
-        <div class="flex items-baseline gap-1">
-          <input 
-            id="goal-vocab" 
-            type="number" 
-            min="1"
-            bind:value={goals.vocab}
-            oninput={() => triggerAutoSave()} 
-            class="w-full bg-transparent text-lg font-black font-mono text-[var(--text-primary)] outline-none" 
-          />
-          <span class="text-xs font-mono font-bold text-[var(--text-muted)]">words</span>
-        </div>
-      </div>
-
-      <!-- Listening -->
-      <div class="p-3.5 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-card)] space-y-1.5 focus-within:border-orange-500 transition-colors">
-        <label for="goal-listening" class="block text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">
-          Listening
-        </label>
-        <div class="flex items-baseline gap-1">
-          <input 
-            id="goal-listening" 
-            type="number" 
-            min="1"
-            bind:value={goals.listening_minutes}
-            oninput={() => triggerAutoSave()} 
-            class="w-full bg-transparent text-lg font-black font-mono text-[var(--text-primary)] outline-none" 
-          />
-          <span class="text-xs font-mono font-bold text-[var(--text-muted)]">mins</span>
-        </div>
-      </div>
-
-      <!-- Speaking -->
-      <div class="p-3.5 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-card)] space-y-1.5 focus-within:border-pink-500 transition-colors">
-        <label for="goal-speaking" class="block text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">
-          Speaking
-        </label>
-        <div class="flex items-baseline gap-1">
-          <input 
-            id="goal-speaking" 
-            type="number" 
-            min="1"
-            bind:value={goals.speaking_minutes}
-            oninput={() => triggerAutoSave()} 
-            class="w-full bg-transparent text-lg font-black font-mono text-[var(--text-primary)] outline-none" 
-          />
-          <span class="text-xs font-mono font-bold text-[var(--text-muted)]">mins</span>
-        </div>
-      </div>
-
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
       <!-- CI Target -->
       <div class="p-3.5 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-card)] space-y-1.5 focus-within:border-purple-500 transition-colors">
         <label for="goal-ci" class="block text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">
@@ -432,11 +873,10 @@
           <span class="text-xs font-mono font-bold text-[var(--text-muted)]">pts</span>
         </div>
       </div>
-
     </div>
   </section>
 
-  <!-- SECTION 3: SKILL CATEGORY PALETTE -->
+  <!-- SECTION 5: SKILL CATEGORY PALETTE -->
   {#if colors && Object.keys(colors).length > 0}
     <section class="relative p-6 rounded-3xl border border-[var(--border-card)] bg-[var(--bg-surface)]/85 shadow-sm space-y-4 backdrop-blur-xl z-10">
       <div class="flex items-center gap-2.5 border-b border-[var(--border-subtle)] pb-4">
@@ -491,7 +931,7 @@
     </section>
   {/if}
 
-  <!-- SECTION 4: TONE / PITCH ACCENT PALETTE -->
+  <!-- SECTION 6: TONE / PITCH ACCENT PALETTE -->
   {#if tones && Object.keys(tones).length > 0}
     <section class="relative p-6 rounded-3xl border border-[var(--border-card)] bg-[var(--bg-surface)]/85 shadow-sm space-y-4 backdrop-blur-xl z-10">
       <div class="flex items-center gap-2.5 border-b border-[var(--border-subtle)] pb-4">
@@ -542,7 +982,7 @@
     </section>
   {/if}
 
-  <!-- SECTION 5: STUDY REMINDERS & NOTIFICATIONS -->
+  <!-- SECTION 7: STUDY REMINDERS & NOTIFICATIONS -->
   <section class="relative p-6 rounded-3xl border border-[var(--border-card)] bg-[var(--bg-surface)]/85 shadow-sm space-y-4 backdrop-blur-xl z-10">
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border-subtle)] pb-4">
       <div class="flex items-center gap-2.5">
@@ -614,7 +1054,7 @@
     {/if}
   </section>
 
-  <!-- SECTION 6: SNAPSHOTS & BACKUP -->
+  <!-- SECTION 8: SNAPSHOTS & BACKUP -->
   <section class="relative p-6 rounded-3xl border border-[var(--border-card)] bg-[var(--bg-surface)]/85 shadow-sm space-y-4 backdrop-blur-xl z-10">
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div class="flex items-center gap-2.5">

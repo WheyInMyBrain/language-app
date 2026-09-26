@@ -9,11 +9,11 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 use yrs::updates::decoder::Decode;
-use yrs::{Array, Doc, Map, ReadTxn, Transact, Update};
+use yrs::{Doc, Map, ReadTxn, Transact, Update};
 
 pub fn start_notification_worker(state: Arc<AppState>) {
     tokio::spawn(async move {
-        info!(target: "scheduler", "Yjs notification rule engine background worker started");
+        info!(target: "scheduler", "Adaptive Momentum Notification worker started");
 
         let sent_tracker = Arc::new(Mutex::new(HashMap::<String, i64>::new()));
         let mut last_clean_date = String::new();
@@ -101,28 +101,60 @@ async fn get_or_load_room_doc(state: &Arc<AppState>, room_name: &str) -> Option<
     None
 }
 
+// 🌟 Half-Life EMA Calculation mirroring momentumEngine.js 🌟
+fn calculate_ema(history: &[f64], baseline: f64, half_life_days: f64) -> f64 {
+    if history.is_empty() {
+        return baseline;
+    }
+    let alpha = 1.0 - (-std::f64::consts::LN_2 / half_life_days.max(0.5)).exp();
+    let mut ema = history[0];
+    for &val in &history[1..] {
+        ema = alpha * val + (1.0 - alpha) * ema;
+    }
+    ema
+}
+
 struct LanguageSnapshot {
     lang_code: String,
     current_streak: u32,
-    revisions_done: u32,
+
+    // Dynamic Goals for Today
+    target_vocab: u32,
+    target_listening_mins: u32,
+    target_speaking_mins: u32,
+    target_ci: u32,
+
+    // Current Today Progress
     words_count: u32,
     ci_count: u32,
-    listening_items: u32,
-    media_listening_mins: u32,
-    recorded_speaking_mins: u32,
-    past_debt_dates: Vec<String>,
+    listening_mins: u32,
+    speaking_mins: u32,
+    revisions_done_today: u32,
+
+    // Completion Flags from calendar_index
+    vocab_done: bool,
+    ci_done: bool,
+    listening_done: bool,
+    speaking_done: bool,
+    grammar_done: bool,
+
+    // Tri-Deck SRS Backlog Counts
     visual_srs_due: usize,
     audio_srs_due: usize,
-    missing_voice_sessions: Vec<(String, u32, Vec<String>, usize)>,
-    unread_words: Vec<String>,
-    incomplete_activities: Vec<String>,
+    write_srs_due: usize,
     leech_words: Vec<String>,
+
+    // Prioritized Overdue Revisions (< today_str)
+    overdue_revisions_count: usize,
+    urgent_pass_zero_or_one_dates: Vec<String>,
+
+    // Catch-Up Siphon Counts (Extracted from calendar_index without loading day rooms!)
+    unvoiced_words_pending: usize,
 }
 
 async fn collect_snapshots(
     state: &Arc<AppState>,
     today_str: &str,
-    current_hour: u32,
 ) -> Vec<LanguageSnapshot> {
     let mut snapshots = Vec::new();
 
@@ -159,42 +191,102 @@ async fn collect_snapshots(
     for (lang_code, lang_val) in languages_map {
         let current_streak = lang_val.get("current_streak").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
 
-        let today_cal_key = format!("{lang_code}:{today_str}");
-        let today_cal = cal_index_map.get(&today_cal_key);
+        // Resolve momentum boundaries from language configuration
+        let mom = lang_val.get("momentum");
+        let goals = lang_val.get("goals");
 
-        let revisions_done = today_cal.and_then(|c| c.get("revision")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let words_count = today_cal.and_then(|c| c.get("word")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let ci_count = today_cal.and_then(|c| c.get("ci")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let listening_items = today_cal.and_then(|c| c.get("listening")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let listening_sec = today_cal.and_then(|c| c.get("listening_time")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let speaking_sec = today_cal.and_then(|c| c.get("speaking_time")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let listen_base = mom.and_then(|m| m.get("listening")).and_then(|l| l.get("baseline")).and_then(|v| v.as_f64())
+            .or_else(|| goals.and_then(|g| g.get("listening_minutes")).and_then(|v| v.as_f64())).unwrap_or(45.0);
+        let listen_floor = mom.and_then(|m| m.get("listening")).and_then(|l| l.get("floor")).and_then(|v| v.as_f64()).unwrap_or(20.0);
+        let listen_ceil = mom.and_then(|m| m.get("listening")).and_then(|l| l.get("ceiling")).and_then(|v| v.as_f64()).unwrap_or(90.0);
 
-        let media_listening_mins = listening_sec / 60;
-        let recorded_speaking_mins = speaking_sec / 60;
+        let speak_base = mom.and_then(|m| m.get("speaking")).and_then(|s| s.get("baseline")).and_then(|v| v.as_f64())
+            .or_else(|| goals.and_then(|g| g.get("speaking_minutes")).and_then(|v| v.as_f64())).unwrap_or(10.0);
+        let speak_floor = mom.and_then(|m| m.get("speaking")).and_then(|s| s.get("floor")).and_then(|v| v.as_f64()).unwrap_or(5.0);
+        let speak_ceil = mom.and_then(|m| m.get("speaking")).and_then(|s| s.get("ceiling")).and_then(|v| v.as_f64()).unwrap_or(25.0);
 
-        let mut past_debt_dates = Vec::new();
+        let vocab_base = mom.and_then(|m| m.get("vocab")).and_then(|w| w.get("baseline")).and_then(|v| v.as_f64())
+            .or_else(|| goals.and_then(|g| g.get("vocab")).and_then(|v| v.as_f64())).unwrap_or(5.0);
+        let vocab_floor = mom.and_then(|m| m.get("vocab")).and_then(|w| w.get("floor")).and_then(|v| v.as_f64()).unwrap_or(2.0);
+        let vocab_ceil = mom.and_then(|m| m.get("vocab")).and_then(|w| w.get("ceiling")).and_then(|v| v.as_f64()).unwrap_or(10.0).min(10.0);
+
+        // Gather recent history from calendar_index
+        let mut past_listen_history = Vec::new();
+        let mut past_speak_history = Vec::new();
+        let mut past_vocab_history = Vec::new();
+
+        let mut unvoiced_words_pending = 0;
+        let mut overdue_revisions_count = 0;
+        let mut urgent_pass_zero_or_one_dates = Vec::new();
+
         for (cal_key, cal_obj) in &cal_index_map {
             if cal_key.starts_with(&format!("{lang_code}:")) {
                 if let Some(date_str) = cal_obj.get("date").and_then(|d| d.as_str()) {
                     if date_str < today_str {
+                        let l_sec = cal_obj.get("listening_time").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let s_sec = cal_obj.get("speaking_time").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let w_cnt = cal_obj.get("word").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+                        past_listen_history.push(l_sec / 60.0);
+                        past_speak_history.push(s_sec / 60.0);
+                        past_vocab_history.push(w_cnt);
+
+                        // Overdue check
+                        let due_date = cal_obj.get("due_date").and_then(|d| d.as_str()).unwrap_or(date_str);
                         let rev = cal_obj.get("revision").and_then(|r| r.as_u64()).unwrap_or(0);
-                        if rev == 0 {
-                            past_debt_dates.push(date_str.to_string());
+                        if due_date <= today_str || rev == 0 {
+                            overdue_revisions_count += 1;
+                            if rev <= 1 && urgent_pass_zero_or_one_dates.len() < 3 {
+                                urgent_pass_zero_or_one_dates.push(date_str.to_string());
+                            }
+                        }
+
+                        // Count unvoiced words directly from telemetry array
+                        if let Some(arr) = cal_obj.get("unvoiced_words_indices").and_then(|v| v.as_array()) {
+                            unvoiced_words_pending += arr.len();
                         }
                     }
                 }
             }
         }
-        past_debt_dates.sort();
 
-        // 2. Load {lang_code}:srs room
+        // Calculate today's dynamic targets via momentum EMA
+        let ema_listen = calculate_ema(&past_listen_history, listen_base, 2.5);
+        let ema_speak = calculate_ema(&past_speak_history, speak_base, 2.5);
+        let ema_vocab = calculate_ema(&past_vocab_history, vocab_base, 2.5);
+
+        let target_listening_mins = (ema_listen.round() as u32).clamp(listen_floor as u32, listen_ceil as u32);
+        let target_speaking_mins = (ema_speak.round() as u32).clamp(speak_floor as u32, speak_ceil as u32);
+        let target_vocab = (ema_vocab.round() as u32).clamp(vocab_floor as u32, vocab_ceil as u32);
+        let target_ci = goals.and_then(|g| g.get("ci")).and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+
+        // Today's current progress
+        let today_cal_key = format!("{lang_code}:{today_str}");
+        let today_cal = cal_index_map.get(&today_cal_key);
+
+        let words_count = today_cal.and_then(|c| c.get("word")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let ci_count = today_cal.and_then(|c| c.get("ci")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let listening_sec = today_cal.and_then(|c| c.get("listening_time")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let speaking_sec = today_cal.and_then(|c| c.get("speaking_time")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+        let reviews_obj = today_cal.and_then(|c| c.get("reviews_completed"));
+        let revisions_done_today = reviews_obj.and_then(|r| r.get("day_revisions")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+        let vocab_done = today_cal.and_then(|c| c.get("vocab_done")).and_then(|v| v.as_bool()).unwrap_or(words_count >= target_vocab);
+        let ci_done = today_cal.and_then(|c| c.get("ci_done")).and_then(|v| v.as_bool()).unwrap_or(ci_count >= target_ci);
+        let listening_done = today_cal.and_then(|c| c.get("listening_done")).and_then(|v| v.as_bool()).unwrap_or((listening_sec / 60) >= target_listening_mins);
+        let speaking_done = today_cal.and_then(|c| c.get("speaking_done")).and_then(|v| v.as_bool()).unwrap_or((speaking_sec / 60) >= target_speaking_mins);
+        let grammar_done = today_cal.and_then(|c| c.get("grammar_done")).and_then(|v| v.as_bool()).unwrap_or(false);
+
+        // 2. Load {lang_code}:srs room (Tri-Deck check + lapses)
         let srs_room_name = format!("{lang_code}:srs");
-        let (visual_srs_due, audio_srs_due, leech_words) = if let Some(srs_doc) = get_or_load_room_doc(state, &srs_room_name).await {
+        let (visual_srs_due, audio_srs_due, write_srs_due, leech_words) = if let Some(srs_doc) = get_or_load_room_doc(state, &srs_room_name).await {
             let queue_map = srs_doc.get_or_insert_map("queue");
             let txn = srs_doc.transact();
 
             let mut vis_count = 0;
             let mut aud_count = 0;
+            let mut write_count = 0;
             let mut leeches = Vec::new();
 
             for (_k, v) in queue_map.iter(&txn) {
@@ -202,138 +294,52 @@ async fn collect_snapshots(
                 if let Ok(card) = serde_json::from_str::<JsonValue>(&json_str) {
                     let card_type = card.get("card_type").and_then(|c| c.as_str()).unwrap_or("visual");
                     let due_date = card.get("due_date").and_then(|d| d.as_str()).unwrap_or("");
-                    let ease = card.get("ease").and_then(|e| e.as_f64()).unwrap_or(2.5);
+                    let lapses = card.get("lapses").and_then(|l| l.as_u64()).unwrap_or(0);
                     let native = card.get("native").and_then(|n| n.as_str()).unwrap_or("").to_string();
 
                     if due_date <= today_str && !due_date.is_empty() {
-                        if card_type == "visual" {
-                            vis_count += 1;
-                        } else {
-                            aud_count += 1;
+                        match card_type {
+                            "listening" | "audio" => aud_count += 1,
+                            "writing" => write_count += 1,
+                            _ => vis_count += 1,
                         }
                     }
 
-                    if ease < 1.6 && !native.is_empty() && leeches.len() < 3 {
+                    // Leech identification: lapses >= 3
+                    if lapses >= 3 && !native.is_empty() && leeches.len() < 3 {
                         leeches.push(native);
                     }
                 }
             }
-            (vis_count, aud_count, leeches)
+            (vis_count, aud_count, write_count, leeches)
         } else {
-            (0, 0, Vec::new())
+            (0, 0, 0, Vec::new())
         };
-
-        // 3. Database Audits (After 15:00)
-        let mut missing_voice_sessions = Vec::new();
-        let mut unread_words = Vec::new();
-        let mut incomplete_activities = Vec::new();
-
-        if current_hour >= 15 && current_hour < 23 {
-            // Check today's day room
-            let today_room_name = format!("{lang_code}:{today_str}");
-            if let Some(day_doc) = get_or_load_room_doc(state, &today_room_name).await {
-                let words_arr = day_doc.get_or_insert_array("words");
-                let acts_arr = day_doc.get_or_insert_array("activities");
-                let txn = day_doc.transact();
-
-                for v in words_arr.iter(&txn) {
-                    let json_str = v.to_string(&txn);
-                    if let Ok(val) = serde_json::from_str::<JsonValue>(&json_str) {
-                        let word_items: Vec<JsonValue> = if val.is_array() {
-                            val.as_array().cloned().unwrap_or_default()
-                        } else {
-                            vec![val]
-                        };
-
-                        for w in word_items {
-                            let native = w.get("native_script").and_then(|s| s.as_str()).unwrap_or("");
-                            let pron = w.get("pronunciation").and_then(|s| s.as_str()).unwrap_or("");
-                            if !native.is_empty() && (pron.is_empty() || pron == native) && unread_words.len() < 3 {
-                                unread_words.push(native.to_string());
-                            }
-                        }
-                    }
-                }
-
-                for v in acts_arr.iter(&txn) {
-                    let json_str = v.to_string(&txn);
-                    if let Ok(val) = serde_json::from_str::<JsonValue>(&json_str) {
-                        let act_items: Vec<JsonValue> = if val.is_array() {
-                            val.as_array().cloned().unwrap_or_default()
-                        } else {
-                            vec![val]
-                        };
-
-                        for a in act_items {
-                            let act_type = a.get("activity_type").and_then(|t| t.as_str()).unwrap_or("");
-                            let link = a.get("link").and_then(|l| l.as_str()).unwrap_or("");
-                            let link_dur = a.get("link_duration").and_then(|d| d.as_u64()).unwrap_or(0);
-
-                            if act_type == "listening" && (link.is_empty() || link_dur == 0) && incomplete_activities.len() < 2 {
-                                let idx = a.get("item_index").and_then(|i| i.as_u64()).unwrap_or(1);
-                                incomplete_activities.push(format!("Listening #{idx}"));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Check past revisions >= 3 missing audio
-            for (cal_key, cal_obj) in &cal_index_map {
-                if cal_key.starts_with(&format!("{lang_code}:")) {
-                    let rev = cal_obj.get("revision").and_then(|r| r.as_u64()).unwrap_or(0) as u32;
-                    let date_str = cal_obj.get("date").and_then(|d| d.as_str()).unwrap_or("");
-                    if rev >= 3 && !date_str.is_empty() && date_str < today_str {
-                        let past_room = format!("{lang_code}:{date_str}");
-                        if let Some(p_doc) = get_or_load_room_doc(state, &past_room).await {
-                            let words_arr = p_doc.get_or_insert_array("words");
-                            let txn = p_doc.transact();
-                            let mut unvoiced = Vec::new();
-
-                            for v in words_arr.iter(&txn) {
-                                let json_str = v.to_string(&txn);
-                                if let Ok(val) = serde_json::from_str::<JsonValue>(&json_str) {
-                                    let word_items: Vec<JsonValue> = if val.is_array() {
-                                        val.as_array().cloned().unwrap_or_default()
-                                    } else {
-                                        vec![val]
-                                    };
-
-                                    for w in word_items {
-                                        let native = w.get("native_script").and_then(|s| s.as_str()).unwrap_or("");
-                                        let audio_dur = w.get("audio_duration").and_then(|d| d.as_u64()).unwrap_or(0);
-                                        if !native.is_empty() && audio_dur == 0 && unvoiced.len() < 4 {
-                                            unvoiced.push(native.to_string());
-                                        }
-                                    }
-                                }
-                            }
-
-                            if !unvoiced.is_empty() && missing_voice_sessions.len() < 2 {
-                                missing_voice_sessions.push((date_str.to_string(), rev, unvoiced, 0));
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         snapshots.push(LanguageSnapshot {
             lang_code,
             current_streak,
-            revisions_done,
+            target_vocab,
+            target_listening_mins,
+            target_speaking_mins,
+            target_ci,
             words_count,
             ci_count,
-            listening_items,
-            media_listening_mins,
-            recorded_speaking_mins,
-            past_debt_dates,
+            listening_mins: listening_sec / 60,
+            speaking_mins: speaking_sec / 60,
+            revisions_done_today,
+            vocab_done,
+            ci_done,
+            listening_done,
+            speaking_done,
+            grammar_done,
             visual_srs_due,
             audio_srs_due,
-            missing_voice_sessions,
-            unread_words,
-            incomplete_activities,
+            write_srs_due,
             leech_words,
+            overdue_revisions_count,
+            urgent_pass_zero_or_one_dates,
+            unvoiced_words_pending,
         });
     }
 
@@ -348,41 +354,44 @@ async fn evaluate_and_notify(
     now_ts: i64,
     tracker: &Arc<Mutex<HashMap<String, i64>>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let snapshots = collect_snapshots(state, today_str, current_hour).await;
+    let snapshots = collect_snapshots(state, today_str).await;
 
     for snap in snapshots {
         let lang_code = &snap.lang_code;
 
         // =====================================================================
-        // PHASE 1: Morning Focus (Deadline: 12:00 PM)
-        // Targets: 1 Rev, 10 Vocab, 1 CI, 2 Listening (>= 15m media listening)
+        // PHASE 1: Morning Focus (Kickoff & Momentum Guidance)
         // =====================================================================
         if (7..12).contains(&current_hour) {
             if current_hour == 7 && current_minute >= 30 {
                 let key = format!("{today_str}:morning_kickoff:{lang_code}");
                 if can_send(tracker, &key, now_ts, 12 * 60).await {
-                    let ev = NotificationEvent::MorningKickoff { language: lang_code.clone() };
+                    let ev = NotificationEvent::MorningKickoff {
+                        language: lang_code.clone(),
+                        target_vocab: snap.target_vocab,
+                        target_ci: snap.target_ci,
+                        target_listening_mins: snap.target_listening_mins,
+                    };
                     broadcast_push(state, &ev.into_payload()).await;
                 }
             }
 
             if current_hour >= 9 {
-                let missing_rev = if snap.revisions_done >= 1 { 0 } else { 1 };
-                let missing_vocab = 10u32.saturating_sub(snap.words_count);
-                let missing_ci = if snap.ci_count >= 1 { 0 } else { 1 };
-                let missing_listen_items = 2u32.saturating_sub(snap.listening_items);
-                let missing_listen_mins = 15u32.saturating_sub(snap.media_listening_mins);
+                let missing_vocab = snap.target_vocab.saturating_sub(snap.words_count);
+                let missing_ci = snap.target_ci.saturating_sub(snap.ci_count);
+                let half_listening = (snap.target_listening_mins / 2).max(10);
+                let missing_listen_mins = half_listening.saturating_sub(snap.listening_mins);
 
-                if missing_rev > 0 || missing_vocab > 0 || missing_ci > 0 || missing_listen_mins > 0 {
+                if !snap.vocab_done || !snap.ci_done || missing_listen_mins > 0 {
                     let mins_until_noon = ((12 - current_hour) * 60).saturating_sub(current_minute);
                     let key = format!("{today_str}:morning_delta:{lang_code}");
                     if can_send(tracker, &key, now_ts, 45).await {
                         let ev = NotificationEvent::MorningProgressDelta {
                             language: lang_code.clone(),
-                            missing_revisions: missing_rev,
+                            missing_revisions: if snap.revisions_done_today > 0 { 0 } else { 1 },
                             missing_vocab,
                             missing_ci,
-                            missing_listening_items: missing_listen_items,
+                            missing_listening_items: 1,
                             missing_listening_mins: missing_listen_mins,
                             mins_until_noon,
                         };
@@ -392,29 +401,8 @@ async fn evaluate_and_notify(
             }
         }
 
-        // Post-12:00 PM Morning Debt Escalation
-        if (12..14).contains(&current_hour) {
-            let missing_vocab = 10u32.saturating_sub(snap.words_count);
-            let missing_ci = if snap.ci_count >= 1 { 0 } else { 1 };
-            let missing_listen_mins = 15u32.saturating_sub(snap.media_listening_mins);
-
-            if missing_vocab > 0 || missing_ci > 0 || missing_listen_mins > 0 {
-                let key = format!("{today_str}:morning_overdue:{lang_code}");
-                if can_send(tracker, &key, now_ts, 60).await {
-                    let ev = NotificationEvent::MorningOverdueDebt {
-                        language: lang_code.clone(),
-                        missing_vocab,
-                        missing_ci,
-                        missing_listening_mins: missing_listen_mins,
-                    };
-                    broadcast_push(state, &ev.into_payload()).await;
-                }
-            }
-        }
-
         // =====================================================================
-        // PHASE 2: Afternoon Momentum & Debt (Deadline: 06:00 PM)
-        // Targets: 2nd Rev, +15m listening (>= 30m total), 10m speaking, Past Debt = 0
+        // PHASE 2: Afternoon Momentum & Siphon Alert (12:00 - 18:00)
         // =====================================================================
         if (12..18).contains(&current_hour) {
             if current_hour == 13 && current_minute >= 30 {
@@ -422,28 +410,26 @@ async fn evaluate_and_notify(
                 if can_send(tracker, &key, now_ts, 12 * 60).await {
                     let ev = NotificationEvent::AfternoonKickoff {
                         language: lang_code.clone(),
-                        past_debt_days: snap.past_debt_dates.len(),
+                        past_debt_days: snap.overdue_revisions_count,
                     };
                     broadcast_push(state, &ev.into_payload()).await;
                 }
             }
 
-            if (current_hour == 14 && current_minute >= 30) || current_hour >= 15 {
-                let missing_rev = if snap.revisions_done >= 2 { 0 } else { 2 - snap.revisions_done };
-                let missing_speaking = 10u32.saturating_sub(snap.recorded_speaking_mins);
-                let missing_listening = 30u32.saturating_sub(snap.media_listening_mins);
-                let has_past_debt = !snap.past_debt_dates.is_empty();
+            if current_hour >= 15 {
+                let missing_speaking = snap.target_speaking_mins.saturating_sub(snap.speaking_mins);
+                let missing_listening = snap.target_listening_mins.saturating_sub(snap.listening_mins);
 
-                if missing_rev > 0 || missing_speaking > 0 || missing_listening > 0 || has_past_debt {
+                if !snap.speaking_done || !snap.listening_done || snap.overdue_revisions_count > 0 {
                     let mins_until_six = ((18 - current_hour) * 60).saturating_sub(current_minute);
                     let key = format!("{today_str}:afternoon_delta:{lang_code}");
                     if can_send(tracker, &key, now_ts, 50).await {
                         let ev = NotificationEvent::AfternoonProgressDelta {
                             language: lang_code.clone(),
-                            missing_revisions: missing_rev,
+                            missing_revisions: if snap.revisions_done_today >= 1 { 0 } else { 1 },
                             missing_speaking_mins: missing_speaking,
                             missing_listening_mins: missing_listening,
-                            past_debt_dates: snap.past_debt_dates.clone(),
+                            past_debt_dates: snap.urgent_pass_zero_or_one_dates.clone(),
                             mins_until_six,
                         };
                         broadcast_push(state, &ev.into_payload()).await;
@@ -451,35 +437,15 @@ async fn evaluate_and_notify(
                 }
             }
 
-            // Output Imbalance Check
-            if (16..=17).contains(&current_hour) && snap.media_listening_mins >= 30 && snap.recorded_speaking_mins < 10 {
+            // Output Imbalance Check (Listening is high, but speaking is neglected)
+            if (16..=17).contains(&current_hour) && snap.listening_mins >= (snap.target_listening_mins / 2) && !snap.speaking_done {
                 let key = format!("{today_str}:output_imbalance:{lang_code}");
                 if can_send(tracker, &key, now_ts, 90).await {
                     let ev = NotificationEvent::OutputImbalanceWarning {
                         language: lang_code.clone(),
-                        listening_mins: snap.media_listening_mins,
-                        speaking_mins: snap.recorded_speaking_mins,
-                        target_speaking_mins: 10,
-                    };
-                    broadcast_push(state, &ev.into_payload()).await;
-                }
-            }
-        }
-
-        // Post-6:00 PM Afternoon Debt Escalation
-        if (18..20).contains(&current_hour) {
-            let missing_speaking = 10u32.saturating_sub(snap.recorded_speaking_mins);
-            let missing_listening = 30u32.saturating_sub(snap.media_listening_mins);
-            let has_past_debt = !snap.past_debt_dates.is_empty();
-
-            if missing_speaking > 0 || missing_listening > 0 || has_past_debt {
-                let key = format!("{today_str}:afternoon_overdue:{lang_code}");
-                if can_send(tracker, &key, now_ts, 60).await {
-                    let ev = NotificationEvent::AfternoonOverdueDebt {
-                        language: lang_code.clone(),
-                        missing_speaking_mins: missing_speaking,
-                        missing_listening_mins: missing_listening,
-                        past_debt_dates: snap.past_debt_dates.clone(),
+                        listening_mins: snap.listening_mins,
+                        speaking_mins: snap.speaking_mins,
+                        target_speaking_mins: snap.target_speaking_mins,
                     };
                     broadcast_push(state, &ev.into_payload()).await;
                 }
@@ -487,51 +453,25 @@ async fn evaluate_and_notify(
         }
 
         // =====================================================================
-        // DATABASE AUDITS (Strictly Active After 03:00 PM / 15:00)
+        // AUDITS & SIPHON ALERTS (Strictly After 15:00)
         // =====================================================================
         if current_hour >= 15 && current_hour < 23 {
-            // 1. Missing Voice Audit
-            for (date, rev, words, acts) in snap.missing_voice_sessions {
-                let key = format!("{today_str}:voice_audit:{lang_code}:{date}");
-                if can_send(tracker, &key, now_ts, 90).await {
-                    let ev = NotificationEvent::MissingVoiceAudit {
-                        language: lang_code.clone(),
-                        date,
-                        revision_number: rev,
-                        missing_words: words,
-                        missing_activities_count: acts,
-                    };
-                    broadcast_push(state, &ev.into_payload()).await;
-                }
-            }
-
-            // 2. Missing Pronunciation Audit
-            if !snap.unread_words.is_empty() {
-                let key = format!("{today_str}:pron_audit:{lang_code}");
+            // 1. Unvoiced Words Siphon Alert (Metered batch without parsing day rooms)
+            if snap.unvoiced_words_pending > 0 {
+                let key = format!("{today_str}:voice_siphon:{lang_code}");
                 if can_send(tracker, &key, now_ts, 120).await {
-                    let ev = NotificationEvent::MissingPronunciationAudit {
+                    let surfaced = snap.unvoiced_words_pending.min(5);
+                    let buffered = snap.unvoiced_words_pending.saturating_sub(surfaced);
+                    let ev = NotificationEvent::VocalSiphonBatchNudge {
                         language: lang_code.clone(),
-                        date: today_str.to_string(),
-                        untranscribed_words: snap.unread_words,
+                        surfaced_count: surfaced,
+                        buffered_count: buffered,
                     };
                     broadcast_push(state, &ev.into_payload()).await;
                 }
             }
 
-            // 3. Incomplete Activity Link Audit
-            if !snap.incomplete_activities.is_empty() {
-                let key = format!("{today_str}:link_audit:{lang_code}");
-                if can_send(tracker, &key, now_ts, 120).await {
-                    let ev = NotificationEvent::IncompleteActivityLinkAudit {
-                        language: lang_code.clone(),
-                        date: today_str.to_string(),
-                        incomplete_items: snap.incomplete_activities,
-                    };
-                    broadcast_push(state, &ev.into_payload()).await;
-                }
-            }
-
-            // 4. SRS Leech Word Warning
+            // 2. SRS Leech Word Warning (Persistent lapses >= 3)
             if !snap.leech_words.is_empty() {
                 let key = format!("{today_str}:leech_warning:{lang_code}");
                 if can_send(tracker, &key, now_ts, 4 * 60).await {
@@ -543,8 +483,8 @@ async fn evaluate_and_notify(
                 }
             }
 
-            // 5. Audio SRS Queue Backlog
-            if snap.audio_srs_due >= 30 {
+            // 3. Audio SRS Backlog Nudge
+            if snap.audio_srs_due >= 20 {
                 let key = format!("{today_str}:audio_queue_backlog:{lang_code}");
                 if can_send(tracker, &key, now_ts, 3 * 60).await {
                     let ev = NotificationEvent::AudioQueueBacklogNudge {
@@ -554,37 +494,50 @@ async fn evaluate_and_notify(
                     broadcast_push(state, &ev.into_payload()).await;
                 }
             }
+
+            // 4. Writing SRS Backlog Nudge
+            if snap.write_srs_due >= 5 {
+                let key = format!("{today_str}:write_queue_backlog:{lang_code}");
+                if can_send(tracker, &key, now_ts, 4 * 60).await {
+                    let ev = NotificationEvent::WritingQueueBacklogNudge {
+                        language: lang_code.clone(),
+                        writing_cards_due: snap.write_srs_due,
+                    };
+                    broadcast_push(state, &ev.into_payload()).await;
+                }
+            }
         }
 
         // =====================================================================
-        // PHASE 3: Night Closeout (Deadline: 11:00 PM / 23:00)
-        // Targets: 3rd Rev, 45m listening total, Visual SRS Queue = 0
+        // PHASE 3: Night Closeout (18:00 - 23:00)
         // =====================================================================
         if (18..23).contains(&current_hour) {
+            let total_srs_due = snap.visual_srs_due + snap.audio_srs_due + snap.write_srs_due;
+
             if current_hour == 19 && current_minute >= 30 {
                 let key = format!("{today_str}:night_kickoff:{lang_code}");
                 if can_send(tracker, &key, now_ts, 12 * 60).await {
                     let ev = NotificationEvent::NightKickoff {
                         language: lang_code.clone(),
-                        visual_srs_due: snap.visual_srs_due,
+                        visual_srs_due: total_srs_due,
                     };
                     broadcast_push(state, &ev.into_payload()).await;
                 }
             }
 
             if (current_hour == 20 && current_minute >= 30) || current_hour >= 21 {
-                let missing_rev = if snap.revisions_done >= 3 { 0 } else { 3 - snap.revisions_done };
-                let missing_listening = 45u32.saturating_sub(snap.media_listening_mins);
+                let missing_listening = snap.target_listening_mins.saturating_sub(snap.listening_mins);
+                let missing_speaking = snap.target_speaking_mins.saturating_sub(snap.speaking_mins);
 
-                if snap.visual_srs_due > 0 || missing_rev > 0 || missing_listening > 0 {
+                if total_srs_due > 0 || missing_listening > 0 || missing_speaking > 0 || !snap.vocab_done {
                     let mins_until_eleven = ((23 - current_hour) * 60).saturating_sub(current_minute);
                     let key = format!("{today_str}:night_delta:{lang_code}");
                     if can_send(tracker, &key, now_ts, 45).await {
                         let ev = NotificationEvent::NightProgressDelta {
                             language: lang_code.clone(),
-                            missing_revisions: missing_rev,
+                            missing_revisions: if snap.revisions_done_today > 0 { 0 } else { 1 },
                             missing_listening_mins: missing_listening,
-                            visual_srs_due: snap.visual_srs_due,
+                            visual_srs_due: total_srs_due,
                             mins_until_eleven,
                         };
                         broadcast_push(state, &ev.into_payload()).await;
@@ -593,29 +546,32 @@ async fn evaluate_and_notify(
             }
         }
 
-        // Post-11:00 PM Urgent Streak Warning
-        if current_hour >= 23 && (snap.visual_srs_due > 0 || snap.revisions_done < 3) {
-            let key = format!("{today_str}:night_overdue:{lang_code}");
-            if can_send(tracker, &key, now_ts, 40).await {
-                let ev = NotificationEvent::NightOverdueWarning {
-                    language: lang_code.clone(),
-                    visual_srs_due: snap.visual_srs_due,
-                    current_streak: snap.current_streak,
-                };
-                broadcast_push(state, &ev.into_payload()).await;
+        // Urgent Streak Closeout (Past 23:00)
+        if current_hour >= 23 {
+            let total_srs_due = snap.visual_srs_due + snap.audio_srs_due + snap.write_srs_due;
+            if total_srs_due > 0 || !snap.listening_done || !snap.vocab_done {
+                let key = format!("{today_str}:night_overdue:{lang_code}");
+                if can_send(tracker, &key, now_ts, 40).await {
+                    let ev = NotificationEvent::NightOverdueWarning {
+                        language: lang_code.clone(),
+                        visual_srs_due: total_srs_due,
+                        current_streak: snap.current_streak,
+                    };
+                    broadcast_push(state, &ev.into_payload()).await;
+                }
             }
         }
 
-        // Victory Lap (All 3 phases and visual queue cleared)
-        let is_fully_completed = snap.revisions_done >= 3
-            && snap.words_count >= 10
-            && snap.ci_count >= 1
-            && snap.media_listening_mins >= 45
-            && snap.recorded_speaking_mins >= 10
-            && snap.past_debt_dates.is_empty()
-            && snap.visual_srs_due == 0;
+        // 🌟 VICTORY LAP (Adaptive goals cleared + SRS queue clean) 🌟
+        let all_goals_met = snap.vocab_done 
+            && snap.ci_done 
+            && snap.listening_done 
+            && snap.speaking_done 
+            && snap.grammar_done;
 
-        if is_fully_completed {
+        let srs_clear = (snap.visual_srs_due + snap.audio_srs_due + snap.write_srs_due) == 0;
+
+        if all_goals_met && srs_clear {
             let key = format!("{today_str}:victory_lap:{lang_code}");
             if can_send(tracker, &key, now_ts, 24 * 60).await {
                 let ev = NotificationEvent::VictoryLap {

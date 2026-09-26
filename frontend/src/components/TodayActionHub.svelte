@@ -1,7 +1,8 @@
+<!-- frontend/src/components/TodayTasks.svelte -->
 <script>
   import { metadataStore } from '../lib/stores/metadata.svelte.js';
   import { activeLanguage } from '../lib/stores/activeLanguage.svelte.js';
-  import { srsStore } from '../lib/stores/srs.svelte.js';
+  import { getDailyMissionManifest } from '../lib/services/momentumEngine.js';
 
   import { 
     Sparkles, 
@@ -17,7 +18,12 @@
     MessageSquare,
     Calendar,
     Eye,
-    PenTool
+    PenTool,
+    TrendingDown,
+    Zap,
+    RotateCcw,
+    Layers,
+    Volume2
   } from '@lucide/svelte';
 
   let { onSelectDate } = $props();
@@ -32,13 +38,8 @@
   const now = new Date();
   const todayStr = formatLocalDate(now);
 
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = formatLocalDate(tomorrow);
-
   // 1. Reactive Store Bindings
   let langCode = $derived(metadataStore.activeLanguage);
-  let goals = $derived(activeLanguage.goals || {});
   let colors = $derived(activeLanguage.colors || {});
   let themeColor = $derived(activeLanguage.themeColor || '#a855f7');
 
@@ -51,33 +52,23 @@
   let ciDone = $derived(todayLog?.ci || 0);
   let grammarDone = $derived(todayLog?.grammar || 0);
 
-  // 🌟 Tri-Deck SRS Counters (Vision, Listen, Write) 🌟
-  let srsCounts = $derived.by(() => {
-    const raw = srsStore.cards || {};
-    let visualDue = 0;
-    let audioDue = 0;
-    let writingDue = 0;
-
-    for (const item of Object.values(raw)) {
-      if (!item) continue;
-      const isDue = !item.due_date || item.due_date <= todayStr;
-      if (isDue) {
-        if (item.card_type === 'listening' || item.card_type === 'audio') {
-          audioDue++;
-        } else if (item.card_type === 'writing') {
-          writingDue++;
-        } else {
-          visualDue++;
-        }
-      }
-    }
-    return { 
-      visualDue, 
-      audioDue, 
-      writingDue, 
-      totalDue: visualDue + audioDue + writingDue 
-    };
+  // 🌟 2. Unified Daily Conductor Hook 🌟
+  let manifest = $derived.by(() => {
+    return getDailyMissionManifest(todayStr);
   });
+
+  let dynamicGoals = $derived(manifest.goals || {});
+  let listeningZone = $derived(dynamicGoals.listening?.zone || 'homeostasis');
+
+  // SRS Counts (Uncapped, from Manifest)
+  let srsCounts = $derived(manifest.srs || { vision: 0, listen: 0, write: 0, totalDue: 0 });
+
+  // Categorized Revisions
+  let todayRevisions = $derived((manifest.revisions || []).filter(r => r.urgencyCategory === 'today'));
+  let overdueRevisions = $derived((manifest.revisions || []).filter(r => r.urgencyCategory === 'overdue'));
+
+  // Catch-Up Speech Audio Batch
+  let catchUpAudio = $derived(manifest.unvoiced || { surfaced: [], quota: 5, hiddenCount: 0 });
 
   // Interactive Hover State
   let hoveredRingId = $state(null);
@@ -102,7 +93,9 @@
       title: 'Vocabulary',
       icon: MessageSquare,
       current: vocabDone,
-      target: goals.vocab || 10,
+      target: dynamicGoals.vocab?.target || 5,
+      baseline: dynamicGoals.vocab?.baseline || 5,
+      zone: dynamicGoals.vocab?.zone || 'homeostasis',
       unit: 'w',
       color: colors.vocab?.primary || colors.vocab?.dark_primary || '#10b981',
       colorSub: colors.vocab?.light_primary || '#34d399',
@@ -113,7 +106,9 @@
       title: 'Listening',
       icon: Headphones,
       current: listeningMinDone,
-      target: goals.listening_minutes || 30,
+      target: dynamicGoals.listening?.target || 45,
+      baseline: dynamicGoals.listening?.baseline || 45,
+      zone: dynamicGoals.listening?.zone || 'homeostasis',
       unit: 'm',
       color: colors.listening?.primary || colors.listening?.dark_primary || '#f97316',
       colorSub: colors.listening?.light_primary || '#fb923c',
@@ -124,7 +119,9 @@
       title: 'Speaking',
       icon: Mic,
       current: speakingMinDone,
-      target: goals.speaking_minutes || 15,
+      target: dynamicGoals.speaking?.target || 10,
+      baseline: dynamicGoals.speaking?.baseline || 10,
+      zone: dynamicGoals.speaking?.zone || 'homeostasis',
       unit: 'm',
       color: colors.speaking?.primary || colors.speaking?.dark_primary || '#ec4899',
       colorSub: colors.speaking?.light_primary || '#f472b6',
@@ -135,7 +132,9 @@
       title: 'CI Video',
       icon: Play,
       current: ciDone,
-      target: goals.ci || 1,
+      target: activeLanguage.goals?.ci || 1,
+      baseline: activeLanguage.goals?.ci || 1,
+      zone: 'homeostasis',
       unit: 'v',
       color: colors.ci?.primary || colors.ci?.dark_primary || '#a855f7',
       colorSub: colors.ci?.light_primary || '#c084fc',
@@ -146,7 +145,9 @@
       title: 'Grammar',
       icon: BookOpen,
       current: grammarDone,
-      target: goals.grammar || 3,
+      target: activeLanguage.goals?.grammar || 1,
+      baseline: activeLanguage.goals?.grammar || 1,
+      zone: 'homeostasis',
       unit: 'p',
       color: colors.grammar?.primary || colors.grammar?.dark_primary || '#0ea5e9',
       colorSub: colors.grammar?.light_primary || '#38bdf8',
@@ -170,88 +171,15 @@
       color: ring.color,
       current: ring.current,
       target: ring.target,
+      baseline: ring.baseline,
+      zone: ring.zone,
       unit: ring.unit
     };
   });
 
-  // Schedule Logic
-  let scheduledActionItems = $derived.by(() => {
-    const items = [];
-    const entries = metadataStore.sortedCalendarEntries || [];
-
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      const rev = Number(entry.revision ?? 0);
-      const dueDate = entry.due_date;
-
-      if (rev < 1) {
-        if (entry.date < todayStr) {
-          const diffDays = Math.max(
-            1,
-            Math.round((new Date(todayStr) - new Date(entry.date)) / (1000 * 60 * 60 * 24))
-          );
-          items.push({
-            date: entry.date,
-            revision: 0,
-            statusLabel: `+${diffDays}d LATE`,
-            urgencyCategory: 'overdue',
-            overdueDays: diffDays,
-            sortWeight: -diffDays
-          });
-        } else if (entry.date === todayStr) {
-          items.push({
-            date: entry.date,
-            revision: 0,
-            statusLabel: 'NEW',
-            urgencyCategory: 'today',
-            overdueDays: 0,
-            sortWeight: 0
-          });
-        }
-        continue;
-      }
-
-      if (dueDate) {
-        if (dueDate < todayStr) {
-          const diffDays = Math.max(
-            1,
-            Math.round((new Date(todayStr) - new Date(dueDate)) / (1000 * 60 * 60 * 24))
-          );
-          items.push({
-            date: entry.date,
-            revision: rev,
-            statusLabel: `+${diffDays}d LATE`,
-            urgencyCategory: 'overdue',
-            overdueDays: diffDays,
-            sortWeight: -diffDays
-          });
-        } else if (dueDate === todayStr) {
-          items.push({
-            date: entry.date,
-            revision: rev,
-            statusLabel: 'TODAY',
-            urgencyCategory: 'today',
-            overdueDays: 0,
-            sortWeight: 1
-          });
-        } else if (dueDate === tomorrowStr) {
-          items.push({
-            date: entry.date,
-            revision: rev,
-            statusLabel: 'TOMORROW',
-            urgencyCategory: 'tomorrow',
-            overdueDays: 0,
-            sortWeight: 2
-          });
-        }
-      }
-    }
-
-    return items.sort((a, b) => a.sortWeight - b.sortWeight);
-  });
-
   let hasTodayLog = $derived(todayLog !== null);
-  let overdueCount = $derived(scheduledActionItems.filter((i) => i.urgencyCategory === 'overdue').length);
+  let overdueCount = $derived(overdueRevisions.length);
+
   let flashcardColor = $derived(colors.flashcard?.primary || colors.flashcard?.dark_primary || '#f43f5e');
   let audioColor = $derived(colors.listening?.primary || colors.listening?.dark_primary || '#f97316');
   let writingColor = $derived(colors.speaking?.primary || colors.speaking?.dark_primary || '#c026d3');
@@ -268,26 +196,19 @@
         glow: `0 0 20px color-mix(in srgb, ${vocabColor} 25%, transparent)`
       };
     }
-    if (item.urgencyCategory === 'tomorrow') {
-      return {
-        pillBg: 'rgba(168, 85, 247, 0.22)',
-        pillBorder: 'rgba(168, 85, 247, 0.5)',
-        pillText: '#d8b4fe',
-        rowBorder: 'rgba(168, 85, 247, 0.28)',
-        rowBg: 'rgba(168, 85, 247, 0.06)',
-        glow: '0 0 20px rgba(168, 85, 247, 0.18)'
-      };
-    }
     
-    const intensity = Math.min(item.overdueDays, 7);
-    const redAlpha = 0.2 + (intensity * 0.04);
-    const borderAlpha = 0.45 + (intensity * 0.06);
+    // Scale intensity with overdue days and lower revision weight
+    const intensity = Math.min(item.overdueDays || 1, 7);
+    const isPassZero = item.revision === 0;
+    const redAlpha = isPassZero ? 0.28 : 0.18 + (intensity * 0.03);
+    const borderAlpha = isPassZero ? 0.60 : 0.40 + (intensity * 0.05);
+
     return {
       pillBg: `rgba(244, 63, 94, ${redAlpha})`,
       pillBorder: `rgba(244, 63, 94, ${borderAlpha})`,
-      pillText: intensity > 3 ? '#ff2a55' : '#fb7185',
-      rowBorder: `rgba(244, 63, 94, ${0.28 + intensity * 0.05})`,
-      rowBg: `rgba(244, 63, 94, ${0.06 + intensity * 0.02})`,
+      pillText: isPassZero || intensity > 3 ? '#ff2a55' : '#fb7185',
+      rowBorder: `rgba(244, 63, 94, ${0.28 + intensity * 0.04})`,
+      rowBg: `rgba(244, 63, 94, ${isPassZero ? 0.10 : 0.05 + intensity * 0.02})`,
       glow: `0 0 ${16 + intensity * 3}px rgba(244, 63, 94, ${0.25 + intensity * 0.04})`
     };
   }
@@ -328,6 +249,17 @@
           <span>{todayStr}</span>
           <span>•</span>
           <span class="font-bold text-[var(--text-secondary)]">{overallAveragePct}% Completed</span>
+
+          <!-- Kinetic Momentum Zone Pill -->
+          {#if listeningZone === 'recovery'}
+            <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-400 font-bold text-[9px] tracking-tight">
+              <TrendingDown size={10} /> Recovery
+            </span>
+          {:else if listeningZone === 'overdrive'}
+            <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-bold text-[9px] tracking-tight">
+              <Zap size={10} /> Flow Surge
+            </span>
+          {/if}
         </div>
       </div>
     </div>
@@ -357,7 +289,7 @@
       {#if overdueCount > 0}
         <span class="inline-flex items-center gap-1.5 text-[10px] font-mono font-bold px-2.5 sm:px-3 py-1 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/40 shadow-[0_0_16px_rgba(244,63,94,0.35)] animate-pulse">
           <span class="w-1.5 h-1.5 rounded-full bg-rose-400 shadow-[0_0_6px_#f43f5e]"></span>
-          {overdueCount} Late
+          {overdueCount} Overdue
         </span>
       {/if}
     </div>
@@ -517,220 +449,373 @@
 
   </div>
 
-  <!-- 🌟 TRI-DECK SRS REVIEW QUEUE BANNER (Vision, Listen, Write) 🌟 -->
-  <div class="relative flex items-center justify-between p-3.5 sm:p-4 rounded-2xl border border-[var(--border-card)] bg-[var(--bg-surface-elevated)]/60 shadow-xs backdrop-blur-xs overflow-hidden group box-border">
-    
-    <div 
-      class="absolute left-0 top-0 bottom-0 w-1 opacity-80 group-hover:opacity-100 transition-opacity"
-      style="background-color: {flashcardColor}; box-shadow: 0 0 14px {flashcardColor};"
-    ></div>
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- 🌟 BIFURCATED SCHEDULE DECK (4 Clean Functional Sections) 🌟 -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div class="space-y-5 pt-3 border-t border-[var(--border-subtle)] box-border">
 
-    <div class="flex items-center gap-3 sm:gap-3.5 pl-1.5 min-w-0">
-      <div 
-        class="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl flex items-center justify-center border shadow-xs transition-transform duration-200 group-hover:scale-105 shrink-0"
-        style="
-          background-color: color-mix(in srgb, {flashcardColor} 16%, transparent);
-          border-color: color-mix(in srgb, {flashcardColor} 35%, transparent);
-          color: {flashcardColor};
-          box-shadow: 0 0 12px color-mix(in srgb, {flashcardColor} 20%, transparent);
-        "
-      >
-        <Flame size={18} strokeWidth={2.5} class="group-hover:animate-bounce" />
+    <!-- ======================================================== -->
+    <!-- 1. TODAY'S REVISIONS & SESSIONS (Due specifically today) -->
+    <!-- ======================================================== -->
+    <div class="space-y-2">
+      <div class="flex items-center justify-between px-1">
+        <div class="flex items-center gap-1.5">
+          <Calendar size={13} style="color: {vocabColor};" />
+          <span class="text-[11px] font-black uppercase tracking-wider text-[var(--text-primary)]">
+            Today Tasks
+          </span>
+        </div>
+        <span class="text-[10px] font-mono text-[var(--text-muted)]">
+          {todayRevisions.length + (!hasTodayLog ? 1 : 0)} actions
+        </span>
       </div>
 
-      <div class="space-y-0.5 min-w-0">
-        <span class="text-xs font-bold text-[var(--text-primary)] block truncate">
-          SRS Queue Status
+      <!-- Start Today Action Card (If not created yet) -->
+      {#if !hasTodayLog}
+        <div class="relative w-full">
+          <div 
+            class="pointer-events-none absolute -inset-x-4 -inset-y-2 rounded-2xl blur-xl opacity-30 -z-10"
+            style="background: radial-gradient(ellipse at center, rgba(245, 158, 11, 0.4) 0%, transparent 75%);"
+          ></div>
+
+          <button
+            type="button"
+            onclick={() => onSelectDate(todayStr)}
+            class="group w-full flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border border-amber-500/40 bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-transparent hover:border-amber-500/70 transition-all duration-150 active:scale-[0.99] text-left cursor-pointer shadow-xs hover:shadow-[0_0_24px_rgba(245,158,11,0.25)] relative"
+          >
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-[76px] sm:w-[84px] shrink-0 text-center">
+                <span class="block w-full text-[9px] sm:text-[10px] font-black font-mono px-2 py-0.5 rounded-md bg-amber-500/25 text-amber-300 border border-amber-500/40 uppercase tracking-wider shadow-xs">
+                  START
+                </span>
+              </div>
+
+              <div class="flex items-center gap-2 truncate">
+                <Calendar size={13} class="text-amber-400 shrink-0" />
+                <span class="font-mono text-xs sm:text-sm font-bold text-[var(--text-primary)] group-hover:text-amber-400 transition-colors">
+                  {todayStr}
+                </span>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-1.5 text-xs font-mono font-bold text-amber-400 group-hover:translate-x-1 transition-transform shrink-0 ml-2">
+              <span class="hidden sm:inline">Open</span>
+              <ArrowRight size={14} />
+            </div>
+          </button>
+        </div>
+      {/if}
+
+      <!-- Revisions specifically due today -->
+      {#each todayRevisions as item (item.date)}
+        {@const styles = getUrgencyStyles(item)}
+        <div class="relative w-full">
+          <div 
+            class="pointer-events-none absolute -inset-x-4 -inset-y-2 rounded-2xl blur-xl opacity-35 transition-opacity duration-200 -z-10"
+            style="background: radial-gradient(ellipse at center, {styles.pillText} 0%, transparent 75%);"
+          ></div>
+
+          <button
+            type="button"
+            onclick={() => onSelectDate(item.date)}
+            class="group w-full flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border transition-all duration-150 active:scale-[0.99] text-left cursor-pointer shadow-xs hover:scale-[1.005] relative"
+            style="
+              border-color: {styles.rowBorder};
+              background-color: {styles.rowBg};
+              box-shadow: {styles.glow};
+            "
+          >
+            <div class="flex items-center gap-3 min-w-0 flex-1">
+              <div class="w-[76px] sm:w-[84px] shrink-0 text-center">
+                <span 
+                  class="block w-full text-[9px] sm:text-[10px] font-black font-mono px-1.5 py-0.5 rounded-md uppercase tracking-wider border truncate shadow-xs"
+                  style="
+                    background-color: {styles.pillBg};
+                    border-color: {styles.pillBorder};
+                    color: {styles.pillText};
+                  "
+                >
+                  TODAY
+                </span>
+              </div>
+
+              <div class="flex items-center gap-2 min-w-0 truncate">
+                <Calendar size={13} class="text-[var(--text-muted)] shrink-0 group-hover:text-[var(--text-primary)] transition-colors" />
+                <span class="font-mono text-xs sm:text-sm font-bold text-[var(--text-primary)] tracking-wide truncate">
+                  {item.date}
+                </span>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2 shrink-0 ml-2">
+              <div 
+                class="flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-xl font-mono text-[10px] tracking-tight border border-black/25 dark:border-white/[0.08] bg-black/[0.06] dark:bg-black/50 shadow-[inset_0_2px_4px_rgba(0,0,0,0.4),0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-sm"
+              >
+                <span class="text-[9px] font-extrabold text-[var(--text-muted)] opacity-60 tracking-widest uppercase">
+                  pass
+                </span>
+                <span class="w-[1px] h-2.5 bg-black/20 dark:bg-white/10"></span>
+                <span class="font-black text-xs text-[var(--text-primary)] tabular-nums">
+                  {String(item.revision).padStart(2, '0')}
+                </span>
+              </div>
+
+              <ArrowRight size={13} class="text-[var(--text-muted)] group-hover:text-[var(--text-primary)] group-hover:translate-x-1 transition-transform" />
+            </div>
+          </button>
+        </div>
+      {/each}
+    </div>
+
+    <!-- ======================================================== -->
+    <!-- 2. SRS QUEUE TASKS (Uncapped Tri-Deck Counts)            -->
+    <!-- ======================================================== -->
+    <div class="space-y-2">
+      <div class="flex items-center justify-between px-1">
+        <div class="flex items-center gap-1.5">
+          <Layers size={13} style="color: {flashcardColor};" />
+          <span class="text-[11px] font-black uppercase tracking-wider text-[var(--text-primary)]">
+            SRS Tasks
+          </span>
+        </div>
+        <span class="text-[10px] font-mono text-[var(--text-muted)]">
+          {srsCounts.totalDue} cards pending
         </span>
+      </div>
+
+      <div class="p-3 sm:p-3.5 rounded-2xl border border-[var(--border-card)] bg-[var(--bg-surface-elevated)]/60 shadow-xs backdrop-blur-xs flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2 min-w-0">
+          <div 
+            class="w-8 h-8 rounded-xl flex items-center justify-center border shadow-xs shrink-0"
+            style="
+              background-color: color-mix(in srgb, {flashcardColor} 16%, transparent);
+              border-color: color-mix(in srgb, {flashcardColor} 35%, transparent);
+              color: {flashcardColor};
+            "
+          >
+            <Flame size={16} strokeWidth={2.5} />
+          </div>
+          <span class="text-xs font-bold text-[var(--text-primary)] truncate">
+            Tri-Deck Spaced Reviews
+          </span>
+        </div>
+
+        <!-- 3 Quantitative Badges -->
+        <div class="flex items-center gap-2 shrink-0">
+          {#if srsCounts.totalDue === 0}
+            <div 
+              class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[10px] font-mono font-bold uppercase tracking-wider shadow-xs"
+              style="
+                background-color: color-mix(in srgb, {vocabColor} 14%, transparent);
+                border-color: color-mix(in srgb, {vocabColor} 35%, transparent);
+                color: {vocabColor};
+              "
+            >
+              <CheckCircle2 size={12} />
+              <span>Clear</span>
+            </div>
+          {:else}
+            <!-- 1. Vision SRS -->
+            <div 
+              class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border shadow-2xs"
+              style="
+                background-color: color-mix(in srgb, {flashcardColor} 12%, transparent);
+                border-color: color-mix(in srgb, {flashcardColor} 30%, transparent);
+              "
+              title="Visual Flashcards Due"
+            >
+              <Eye size={12} style="color: {flashcardColor};" />
+              <span class="text-xs sm:text-sm font-mono font-black" style="color: {flashcardColor};">
+                {srsCounts.vision}
+              </span>
+              <span class="text-[9px] font-mono font-bold lowercase text-[var(--text-muted)] hidden sm:inline">
+                vis
+              </span>
+            </div>
+
+            <!-- 2. Listening SRS -->
+            <div 
+              class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border shadow-2xs"
+              style="
+                background-color: color-mix(in srgb, {audioColor} 12%, transparent);
+                border-color: color-mix(in srgb, {audioColor} 30%, transparent);
+              "
+              title="Audio Ear Training Due"
+            >
+              <Headphones size={12} style="color: {audioColor};" />
+              <span class="text-xs sm:text-sm font-mono font-black" style="color: {audioColor};">
+                {srsCounts.listen}
+              </span>
+              <span class="text-[9px] font-mono font-bold lowercase text-[var(--text-muted)] hidden sm:inline">
+                ear
+              </span>
+            </div>
+
+            <!-- 3. Writing SRS -->
+            <div 
+              class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border shadow-2xs"
+              style="
+                background-color: color-mix(in srgb, {writingColor} 12%, transparent);
+                border-color: color-mix(in srgb, {writingColor} 30%, transparent);
+              "
+              title="Motor Calligraphy Due"
+            >
+              <PenTool size={12} style="color: {writingColor};" />
+              <span class="text-xs sm:text-sm font-mono font-black" style="color: {writingColor};">
+                {srsCounts.write}
+              </span>
+              <span class="text-[9px] font-mono font-bold lowercase text-[var(--text-muted)] hidden sm:inline">
+                write
+              </span>
+            </div>
+          {/if}
+        </div>
       </div>
     </div>
 
-    <!-- Tri-Deck Due Metrics -->
-    <div class="flex items-center gap-2 sm:gap-2.5 shrink-0 ml-2">
-      {#if srsCounts.totalDue === 0}
-        <div 
-          class="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-full border text-[10px] font-mono font-bold uppercase tracking-wider shadow-xs"
-          style="
-            background-color: color-mix(in srgb, {vocabColor} 14%, transparent);
-            border-color: color-mix(in srgb, {vocabColor} 35%, transparent);
-            color: {vocabColor};
-            box-shadow: 0 0 12px color-mix(in srgb, {vocabColor} 20%, transparent);
-          "
-        >
-          <CheckCircle2 size={12} />
-          <span>Queue Clear</span>
+    <!-- ======================================================== -->
+    <!-- 3. OVERDUE TASKS (Prioritized: Lowest Revision First)    -->
+    <!-- ======================================================== -->
+    {#if overdueRevisions.length > 0}
+      <div class="space-y-2">
+        <div class="flex items-center justify-between px-1">
+          <div class="flex items-center gap-1.5">
+            <RotateCcw size={13} class="text-rose-400" />
+            <span class="text-[11px] font-black uppercase tracking-wider text-rose-400">
+              Overdue Tasks
+            </span>
+          </div>
+          <span class="text-[10px] font-mono text-[var(--text-muted)]">
+            Prioritized by lowest pass first
+          </span>
+        </div>
+
+        {#each overdueRevisions as item (item.date)}
+          {@const styles = getUrgencyStyles(item)}
+          <div class="relative w-full">
+            <div 
+              class="pointer-events-none absolute -inset-x-4 -inset-y-2 rounded-2xl blur-xl opacity-35 transition-opacity duration-200 -z-10"
+              style="background: radial-gradient(ellipse at center, {styles.pillText} 0%, transparent 75%);"
+            ></div>
+
+            <button
+              type="button"
+              onclick={() => onSelectDate(item.date)}
+              class="group w-full flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border transition-all duration-150 active:scale-[0.99] text-left cursor-pointer shadow-xs hover:scale-[1.005] relative"
+              style="
+                border-color: {styles.rowBorder};
+                background-color: {styles.rowBg};
+                box-shadow: {styles.glow};
+              "
+            >
+              <div class="flex items-center gap-3 min-w-0 flex-1">
+                <div class="w-[76px] sm:w-[84px] shrink-0 text-center">
+                  <span 
+                    class="block w-full text-[9px] sm:text-[10px] font-black font-mono px-1.5 py-0.5 rounded-md uppercase tracking-wider border truncate shadow-xs"
+                    style="
+                      background-color: {styles.pillBg};
+                      border-color: {styles.pillBorder};
+                      color: {styles.pillText};
+                    "
+                  >
+                    {item.statusLabel}
+                  </span>
+                </div>
+
+                <div class="flex items-center gap-2 min-w-0 truncate">
+                  <Calendar size={13} class="text-[var(--text-muted)] shrink-0 group-hover:text-[var(--text-primary)] transition-colors" />
+                  <span class="font-mono text-xs sm:text-sm font-bold text-[var(--text-primary)] tracking-wide truncate">
+                    {item.date}
+                  </span>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-2 shrink-0 ml-2">
+                <div 
+                  class="flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-xl font-mono text-[10px] tracking-tight border border-black/25 dark:border-white/[0.08] bg-black/[0.06] dark:bg-black/50 shadow-[inset_0_2px_4px_rgba(0,0,0,0.4),0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-sm"
+                >
+                  <span class="text-[9px] font-extrabold text-[var(--text-muted)] opacity-60 tracking-widest uppercase">
+                    pass
+                  </span>
+                  <span class="w-[1px] h-2.5 bg-black/20 dark:bg-white/10"></span>
+                  <span class="font-black text-xs text-[var(--text-primary)] tabular-nums">
+                    {String(item.revision).padStart(2, '0')}
+                  </span>
+                </div>
+
+                <ArrowRight size={13} class="text-[var(--text-muted)] group-hover:text-[var(--text-primary)] group-hover:translate-x-1 transition-transform" />
+              </div>
+            </button>
+          </div>
+        {/each}
+      </div>
+    {/if}
+
+    <!-- ======================================================== -->
+    <!-- 4. CATCH-UP TASKS (Metered Speech Artifact Clearance)    -->
+    <!-- ======================================================== -->
+    <div class="space-y-2">
+      <div class="flex items-center justify-between px-1">
+        <div class="flex items-center gap-1.5">
+          <Volume2 size={13} style="color: {writingColor};" />
+          <span class="text-[11px] font-black uppercase tracking-wider text-[var(--text-primary)]">
+            Catch-up Tasks
+          </span>
+        </div>
+        <span class="text-[10px] font-mono text-[var(--text-muted)]">
+          Quota: {catchUpAudio.surfaced.length}/{catchUpAudio.quota} items
+        </span>
+      </div>
+
+      {#if catchUpAudio.surfaced.length === 0}
+        <div class="py-2.5 px-3 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-base)] text-center text-xs text-[var(--text-muted)] flex items-center justify-center gap-2">
+          <CheckCircle2 size={13} style="color: {vocabColor};" />
+          <span>All recorded audio artifacts up to date</span>
         </div>
       {:else}
-        <!-- 1. Vision SRS Count (Formerly 'vis') -->
-        <div 
-          class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl border shadow-2xs"
-          style="
-            background-color: color-mix(in srgb, {flashcardColor} 12%, transparent);
-            border-color: color-mix(in srgb, {flashcardColor} 30%, transparent);
-          "
-          title="Visual Flashcards Due"
-        >
-          <Eye size={12} style="color: {flashcardColor};" />
-          <span class="text-xs sm:text-sm font-mono font-black" style="color: {flashcardColor};">
-            {srsCounts.visualDue}
-          </span>
-          <span class="text-[9px] font-mono font-bold lowercase text-[var(--text-muted)] hidden sm:inline">
-            vision
-          </span>
-        </div>
+        <div class="p-3 sm:p-3.5 rounded-2xl border border-[var(--border-card)] bg-[var(--bg-surface-elevated)]/60 shadow-xs space-y-2.5 backdrop-blur-xs">
+          
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-[var(--text-primary)] flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full animate-ping" style="background-color: {writingColor};"></span>
+              Daily Vocal Siphon Batch
+            </span>
+            {#if catchUpAudio.hiddenCount > 0}
+              <span class="text-[10px] font-mono font-bold text-[var(--text-muted)] px-2 py-0.5 rounded-md bg-[var(--bg-base)] border border-[var(--border-subtle)]">
+                +{catchUpAudio.hiddenCount} buffered
+              </span>
+            {/if}
+          </div>
 
-        <!-- 2. Listen SRS Count (Formerly 'ear') -->
-        <div 
-          class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl border shadow-2xs"
-          style="
-            background-color: color-mix(in srgb, {audioColor} 12%, transparent);
-            border-color: color-mix(in srgb, {audioColor} 30%, transparent);
-          "
-          title="Listening / Ear Training Due"
-        >
-          <Headphones size={12} style="color: {audioColor};" />
-          <span class="text-xs sm:text-sm font-mono font-black" style="color: {audioColor};">
-            {srsCounts.audioDue}
-          </span>
-          <span class="text-[9px] font-mono font-bold lowercase text-[var(--text-muted)] hidden sm:inline">
-            listen
-          </span>
-        </div>
-
-        <!-- 3. Write SRS Count -->
-        <div 
-          class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl border shadow-2xs"
-          style="
-            background-color: color-mix(in srgb, {writingColor} 12%, transparent);
-            border-color: color-mix(in srgb, {writingColor} 30%, transparent);
-          "
-          title="Motor & Stroke Calligraphy Due"
-        >
-          <PenTool size={12} style="color: {writingColor};" />
-          <span class="text-xs sm:text-sm font-mono font-black" style="color: {writingColor};">
-            {srsCounts.writingDue}
-          </span>
-          <span class="text-[9px] font-mono font-bold lowercase text-[var(--text-muted)] hidden sm:inline">
-            write
-          </span>
+          <!-- Fast-Access Tag Chips for Surfaced Words -->
+          <div class="flex flex-wrap gap-2 pt-1">
+            {#each catchUpAudio.surfaced as task}
+              <button
+                type="button"
+                onclick={() => onSelectDate(task.date)}
+                class="group inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[var(--bg-base)] border border-[var(--border-card)] hover:border-pink-500/50 hover:bg-[var(--bg-surface-elevated)] transition-all cursor-pointer shadow-2xs active:scale-95"
+              >
+                <Mic size={11} style="color: {writingColor};" class="group-hover:scale-110 transition-transform" />
+                <span class="font-mono text-xs font-bold text-[var(--text-primary)]">
+                  {task.date}
+                </span>
+                <span class="text-[9px] font-mono font-bold px-1.5 py-0.2 rounded bg-pink-500/15 text-pink-400 border border-pink-500/30">
+                  Word #{task.wordIndex}
+                </span>
+              </button>
+            {/each}
+          </div>
         </div>
       {/if}
     </div>
-  </div>
 
-  <!-- MONOSPACE SCHEDULED QUEUE -->
-  <div class="pt-2 border-t border-[var(--border-subtle)] space-y-2 box-border relative">
-    <div class="flex items-center justify-between px-1 mb-1">
-      <span class="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
-        Scheduled Queue
-      </span>
-      <span class="text-[10px] font-mono text-[var(--text-muted)]">
-        {scheduledActionItems.length + (!hasTodayLog ? 1 : 0)} actions
-      </span>
-    </div>
-
-    <!-- Initialize Today Action Card -->
-    {#if !hasTodayLog}
-      <div class="relative w-full">
-        <div 
-          class="pointer-events-none absolute -inset-x-4 -inset-y-2 rounded-2xl blur-xl opacity-30 -z-10"
-          style="background: radial-gradient(ellipse at center, rgba(245, 158, 11, 0.4) 0%, transparent 75%);"
-        ></div>
-
-        <button
-          type="button"
-          onclick={() => onSelectDate(todayStr)}
-          class="group w-full flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border border-amber-500/40 bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-transparent hover:border-amber-500/70 transition-all duration-150 active:scale-[0.99] text-left cursor-pointer shadow-xs hover:shadow-[0_0_24px_rgba(245,158,11,0.25)] relative"
-        >
-          <div class="flex items-center gap-3 min-w-0">
-            <div class="w-[76px] sm:w-[84px] shrink-0 text-center">
-              <span class="block w-full text-[9px] sm:text-[10px] font-black font-mono px-2 py-0.5 rounded-md bg-amber-500/25 text-amber-300 border border-amber-500/40 uppercase tracking-wider shadow-xs">
-                START
-              </span>
-            </div>
-
-            <div class="flex items-center gap-2 truncate">
-              <Calendar size={13} class="text-amber-400 shrink-0" />
-              <span class="font-mono text-xs sm:text-sm font-bold text-[var(--text-primary)] group-hover:text-amber-400 transition-colors">
-                {todayStr}
-              </span>
-            </div>
-          </div>
-
-          <div class="flex items-center gap-1.5 text-xs font-mono font-bold text-amber-400 group-hover:translate-x-1 transition-transform shrink-0 ml-2">
-            <span class="hidden sm:inline">Open</span>
-            <ArrowRight size={14} />
-          </div>
-        </button>
-      </div>
-    {/if}
-
-    <!-- Scheduled Action Items -->
-    {#each scheduledActionItems as item (item.date)}
-      {@const styles = getUrgencyStyles(item)}
-      <div class="relative w-full">
-        <div 
-          class="pointer-events-none absolute -inset-x-4 -inset-y-2 rounded-2xl blur-xl opacity-35 transition-opacity duration-200 -z-10"
-          style="background: radial-gradient(ellipse at center, {styles.pillText} 0%, transparent 75%);"
-        ></div>
-
-        <button
-          type="button"
-          onclick={() => onSelectDate(item.date)}
-          class="group w-full flex items-center justify-between p-2.5 sm:p-3 rounded-2xl border transition-all duration-150 active:scale-[0.99] text-left cursor-pointer shadow-xs hover:scale-[1.005] relative"
-          style="
-            border-color: {styles.rowBorder};
-            background-color: {styles.rowBg};
-            box-shadow: {styles.glow};
-          "
-        >
-          <div class="flex items-center gap-3 min-w-0 flex-1">
-            <div class="w-[76px] sm:w-[84px] shrink-0 text-center">
-              <span 
-                class="block w-full text-[9px] sm:text-[10px] font-black font-mono px-1.5 py-0.5 rounded-md uppercase tracking-wider border truncate shadow-xs"
-                style="
-                  background-color: {styles.pillBg};
-                  border-color: {styles.pillBorder};
-                  color: {styles.pillText};
-                "
-              >
-                {item.statusLabel}
-              </span>
-            </div>
-
-            <div class="flex items-center gap-2 min-w-0 truncate">
-              <Calendar size={13} class="text-[var(--text-muted)] shrink-0 group-hover:text-[var(--text-primary)] transition-colors" />
-              <span class="font-mono text-xs sm:text-sm font-bold text-[var(--text-primary)] tracking-wide truncate">
-                {item.date}
-              </span>
-            </div>
-          </div>
-
-          <div class="flex items-center gap-2 shrink-0 ml-2">
-            <div 
-              class="flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-xl font-mono text-[10px] tracking-tight border border-black/25 dark:border-white/[0.08] bg-black/[0.06] dark:bg-black/50 shadow-[inset_0_2px_4px_rgba(0,0,0,0.4),0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-sm"
-            >
-              <span class="text-[9px] font-extrabold text-[var(--text-muted)] opacity-60 tracking-widest uppercase">
-                revision
-              </span>
-              <span class="w-[1px] h-2.5 bg-black/20 dark:bg-white/10"></span>
-              <span class="font-black text-xs text-[var(--text-primary)] tabular-nums">
-                {String(item.revision).padStart(2, '0')}
-              </span>
-            </div>
-
-            <ArrowRight size={13} class="text-[var(--text-muted)] group-hover:text-[var(--text-primary)] group-hover:translate-x-1 transition-transform" />
-          </div>
-        </button>
-      </div>
-    {/each}
-
-    {#if hasTodayLog && scheduledActionItems.length === 0}
-      <div class="py-3 text-center text-xs text-[var(--text-muted)] flex items-center justify-center gap-2 font-medium">
+    {#if hasTodayLog && overdueRevisions.length === 0 && srsCounts.totalDue === 0 && catchUpAudio.surfaced.length === 0}
+      <div class="py-4 text-center text-xs text-[var(--text-muted)] flex items-center justify-center gap-2 font-medium">
         <Sparkles size={14} style="color: {vocabColor};" />
-        <span>All sessions reviewed and targets up to date for today</span>
+        <span>All sessions reviewed and all catch-up queues clear</span>
       </div>
     {/if}
+
   </div>
 
 </div>

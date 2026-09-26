@@ -11,8 +11,28 @@ CREATE TABLE IF NOT EXISTS daily_logs (
   language_id INTEGER NOT NULL REFERENCES languages(id) ON DELETE CASCADE,
   log_date TEXT NOT NULL,
   due_date TEXT,
-  ease REAL,
-  interval INTEGER,
+  ease REAL DEFAULT 2.50,
+  interval INTEGER DEFAULT 0,
+
+  -- Dynamic Goal Completion Flags
+  vocab_done INTEGER DEFAULT 0,
+  ci_done INTEGER DEFAULT 0,
+  listening_done INTEGER DEFAULT 0,
+  speaking_done INTEGER DEFAULT 0,
+  grammar_done INTEGER DEFAULT 0,
+
+  -- Reviews Completed Output Counts
+  srs_vision_done INTEGER DEFAULT 0,
+  srs_listen_done INTEGER DEFAULT 0,
+  srs_write_done INTEGER DEFAULT 0,
+  revisions_done INTEGER DEFAULT 0,
+
+  -- Unvoiced Audit Indices (Stored as JSON Arrays)
+  unvoiced_words TEXT,
+  unvoiced_ci TEXT,
+  unvoiced_listening TEXT,
+  unvoiced_grammar TEXT,
+
   UNIQUE(language_id, log_date)
 );
 
@@ -54,8 +74,10 @@ CREATE TABLE IF NOT EXISTS word_srs (
   word_id INTEGER NOT NULL REFERENCES words(id) ON DELETE CASCADE,
   card_type TEXT NOT NULL,
   due_date TEXT NOT NULL,
-  interval INTEGER NOT NULL,
-  ease REAL NOT NULL,
+  interval INTEGER NOT NULL DEFAULT 0,
+  ease REAL NOT NULL DEFAULT 2.50,
+  last_reviewed TEXT,
+  lapses INTEGER NOT NULL DEFAULT 0,
   UNIQUE(word_id, card_type)
 );
 

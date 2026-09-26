@@ -108,8 +108,10 @@ fn project_yjs_to_relational(
     }
 
     let mut lang_id_map: HashMap<String, i64> = HashMap::new();
+    // Cache calendar_index metadata by key (e.g. "zh-CN:2026-09-26")
+    let mut calendar_telemetry_cache: HashMap<String, Value> = HashMap::new();
 
-    // Pass 1: Languages from global:metadata
+    // Pass 1: Languages and calendar_index from global:metadata
     for (room_name, blob) in &room_cache {
         if room_name == "global:metadata" {
             let doc = Doc::new();
@@ -129,6 +131,13 @@ fn project_yjs_to_relational(
                          ON CONFLICT(code) DO UPDATE SET name = excluded.name",
                         params![code, name],
                     )?;
+                }
+            }
+
+            if let Some(cal_map) = txn.get_map("calendar_index") {
+                for (key, val) in cal_map.iter(&txn) {
+                    let j = out_to_serde(&val, &txn);
+                    calendar_telemetry_cache.insert(key.to_string(), j);
                 }
             }
         }
@@ -194,14 +203,75 @@ fn project_yjs_to_relational(
             (0, None, 2.50, 0)
         };
 
+        // Extract telemetry and flags cached from calendar_index
+        let cal_telemetry = calendar_telemetry_cache.get(room_name);
+
+        let vocab_done = cal_telemetry
+            .and_then(|t| t.get("vocab_done"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false) as i32;
+
+        let ci_done = cal_telemetry
+            .and_then(|t| t.get("ci_done"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false) as i32;
+
+        let listening_done = cal_telemetry
+            .and_then(|t| t.get("listening_done"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false) as i32;
+
+        let speaking_done = cal_telemetry
+            .and_then(|t| t.get("speaking_done"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false) as i32;
+
+        let grammar_done = cal_telemetry
+            .and_then(|t| t.get("grammar_done"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false) as i32;
+
+        let reviews_obj = cal_telemetry.and_then(|t| t.get("reviews_completed"));
+        let srs_vision_done = reviews_obj.and_then(|r| r.get("srs_vision")).and_then(|v| v.as_i64()).unwrap_or(0);
+        let srs_listen_done = reviews_obj.and_then(|r| r.get("srs_listen")).and_then(|v| v.as_i64()).unwrap_or(0);
+        let srs_write_done = reviews_obj.and_then(|r| r.get("srs_write")).and_then(|v| v.as_i64()).unwrap_or(0);
+        let revisions_done = reviews_obj.and_then(|r| r.get("day_revisions")).and_then(|v| v.as_i64()).unwrap_or(0);
+
+        let unvoiced_words = cal_telemetry.and_then(|t| t.get("unvoiced_words_indices")).map(|v| v.to_string());
+        let unvoiced_ci = cal_telemetry.and_then(|t| t.get("unvoiced_ci_indices")).map(|v| v.to_string());
+        let unvoiced_listening = cal_telemetry.and_then(|t| t.get("unvoiced_listening_indices")).map(|v| v.to_string());
+        let unvoiced_grammar = cal_telemetry.and_then(|t| t.get("unvoiced_grammar_indices")).map(|v| v.to_string());
+
         tx.execute(
-            "INSERT INTO daily_logs (language_id, log_date, due_date, ease, interval)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO daily_logs (
+                language_id, log_date, due_date, ease, interval,
+                vocab_done, ci_done, listening_done, speaking_done, grammar_done,
+                srs_vision_done, srs_listen_done, srs_write_done, revisions_done,
+                unvoiced_words, unvoiced_ci, unvoiced_listening, unvoiced_grammar
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
              ON CONFLICT(language_id, log_date) DO UPDATE SET
                 due_date = excluded.due_date,
                 ease = excluded.ease,
-                interval = excluded.interval",
-            params![lang_id, log_date, due_date, ease, interval],
+                interval = excluded.interval,
+                vocab_done = excluded.vocab_done,
+                ci_done = excluded.ci_done,
+                listening_done = excluded.listening_done,
+                speaking_done = excluded.speaking_done,
+                grammar_done = excluded.grammar_done,
+                srs_vision_done = excluded.srs_vision_done,
+                srs_listen_done = excluded.srs_listen_done,
+                srs_write_done = excluded.srs_write_done,
+                revisions_done = excluded.revisions_done,
+                unvoiced_words = excluded.unvoiced_words,
+                unvoiced_ci = excluded.unvoiced_ci,
+                unvoiced_listening = excluded.unvoiced_listening,
+                unvoiced_grammar = excluded.unvoiced_grammar",
+            params![
+                lang_id, log_date, due_date, ease, interval,
+                vocab_done, ci_done, listening_done, speaking_done, grammar_done,
+                srs_vision_done, srs_listen_done, srs_write_done, revisions_done,
+                unvoiced_words, unvoiced_ci, unvoiced_listening, unvoiced_grammar
+            ],
         )?;
 
         let log_id: i64 = tx.query_row(
@@ -262,7 +332,7 @@ fn project_yjs_to_relational(
         }
     }
 
-    // Pass 3: SRS entries
+    // Pass 3: SRS entries (including last_reviewed & lapses)
     for (room_name, blob) in &room_cache {
         if !room_name.ends_with(":srs") {
             continue;
@@ -290,6 +360,8 @@ fn project_yjs_to_relational(
                 let ease = j.get("ease").and_then(|v| v.as_f64()).unwrap_or(2.50);
                 let native = j.get("native").and_then(|v| v.as_str()).unwrap_or("");
                 let source_date = j.get("source_date").and_then(|v| v.as_str()).unwrap_or("");
+                let last_reviewed = j.get("last_reviewed").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let lapses = j.get("lapses").and_then(|v| v.as_i64()).unwrap_or(0);
 
                 if native.is_empty() || source_date.is_empty() {
                     continue;
@@ -307,13 +379,15 @@ fn project_yjs_to_relational(
 
                 if let Some((word_id, log_id)) = word_info {
                     tx.execute(
-                        "INSERT INTO word_srs (language_id, log_id, word_id, card_type, due_date, interval, ease)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                        "INSERT INTO word_srs (language_id, log_id, word_id, card_type, due_date, interval, ease, last_reviewed, lapses)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                          ON CONFLICT(word_id, card_type) DO UPDATE SET
                             due_date = excluded.due_date,
                             interval = excluded.interval,
-                            ease = excluded.ease",
-                        params![lang_id, log_id, word_id, card_type, due_date, interval, ease],
+                            ease = excluded.ease,
+                            last_reviewed = excluded.last_reviewed,
+                            lapses = excluded.lapses",
+                        params![lang_id, log_id, word_id, card_type, due_date, interval, ease, last_reviewed, lapses],
                     )?;
                 }
             }
