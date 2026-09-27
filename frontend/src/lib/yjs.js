@@ -162,7 +162,7 @@ class MultiplexedWsClient {
   }
 
   handleMessage(buf) {
-    if (buf.length < 3) return;
+    if (!buf || buf.length < 3) return;
     const flag = buf[0];
     const nameLen = (buf[1] << 8) | buf[2];
     if (buf.length < 3 + nameLen) return;
@@ -170,21 +170,30 @@ class MultiplexedWsClient {
     const roomName = new TextDecoder().decode(buf.subarray(3, 3 + nameLen));
     const payload = buf.subarray(3 + nameLen);
 
+    // Guard: ignore empty payloads
+    if (payload.length === 0) return;
+
     if (flag === MSG_PAYLOAD) {
       const handlers = this.rooms.get(roomName);
       if (!handlers) return;
 
       for (const { doc } of handlers) {
-        const decoder = decoding.createDecoder(payload);
-        const encoder = encoding.createEncoder();
-        
-        doc.transact(() => {
-          syncProtocol.readSyncMessage(decoder, encoder, doc, this);
-        });
+        try {
+          const decoder = decoding.createDecoder(payload);
+          const encoder = encoding.createEncoder();
+          
+          // Pass `this` as origin to prevent echo back into doc.on('update')!
+          doc.transact(() => {
+            syncProtocol.readSyncMessage(decoder, encoder, doc, this);
+          }, this);
 
-        // If reading sync generated a response (e.g., Step 2 in response to Step 1)
-        if (encoding.length(encoder) > 0) {
-          this.sendPayload(roomName, encoding.toUint8Array(encoder));
+          // If reading sync generated a response (e.g. Step 2)
+          if (encoding.length(encoder) > 0) {
+            this.sendPayload(roomName, encoding.toUint8Array(encoder));
+          }
+        } catch (err) {
+          // Prevent decoder exceptions from crashing the WebSocket listener
+          console.warn(`[Yjs Sync] Skipped invalid frame in "${roomName}":`, err);
         }
       }
     }
