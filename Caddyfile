@@ -1,17 +1,27 @@
 :80 {
     encode gzip zstd
 
-    # Route API, WebSockets, Audio, and Ping to backend container
-    @backend_traffic {
-        path /api*
-        path /ws*
-        path /audio*
-        path /ping*
+    # 1. Route backend traffic first (mutually exclusive)
+    handle /api* {
+        reverse_proxy backend:3000
     }
-    reverse_proxy @backend_traffic backend:3000
 
-    # Everything else is frontend SPA
-    root * /srv/dist
-    file_server
-    try_files {path} /index.html
+    handle /ws* {
+        reverse_proxy backend:3000
+    }
+
+    handle /audio* {
+        reverse_proxy backend:3000
+    }
+
+    handle /ping* {
+        reverse_proxy backend:3000
+    }
+
+    # 2. Everything else is frontend SPA
+    handle {
+        root * /srv/dist
+        try_files {path} /index.html
+        file_server
+    }
 }
