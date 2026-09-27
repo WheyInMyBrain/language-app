@@ -14,7 +14,7 @@ const MSG_SUBSCRIBE = 0x01;
 const MSG_UNSUBSCRIBE = 0x02;
 const MSG_PAYLOAD = 0x03;
 
-// 🌟 Reconnection Interval: 5 Minutes (300,000 ms) 🌟
+// Reconnection interval fallback: 5 Minutes (300,000 ms)
 const RECONNECT_INTERVAL_MS = 5 * 60 * 1000;
 
 class MultiplexedWsClient {
@@ -24,7 +24,6 @@ class MultiplexedWsClient {
     this.status = 'disconnected'; // 'connecting' | 'connected' | 'disconnected'
     this.reconnectTimer = null;
 
-    // Listen for OS/browser network recovery to connect without waiting out the full 5m timer
     if (typeof window !== 'undefined') {
       window.addEventListener('online', () => {
         if (this.status !== 'connected' && this.rooms.size > 0) {
@@ -34,7 +33,11 @@ class MultiplexedWsClient {
       });
 
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && this.status !== 'connected' && this.rooms.size > 0) {
+        if (
+          document.visibilityState === 'visible' &&
+          this.status !== 'connected' &&
+          this.rooms.size > 0
+        ) {
           if (!this.reconnectTimer) {
             this.connect();
           }
@@ -57,7 +60,10 @@ class MultiplexedWsClient {
   }
 
   connect() {
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+    if (
+      this.ws &&
+      (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)
+    ) {
       return;
     }
 
@@ -74,10 +80,10 @@ class MultiplexedWsClient {
         this.status = 'connected';
         this.notifyAllStatus('connected');
 
-        // Resubscribe all active rooms on reconnect
+        // Resubscribe all active rooms and trigger initial Step 1 sync
         for (const [roomName, handlers] of this.rooms.entries()) {
           this.sendSubscribe(roomName);
-          // Send local Step 1 sync for each room
+
           for (const { doc } of handlers) {
             const encoder = encoding.createEncoder();
             syncProtocol.writeSyncStep1(encoder, doc);
@@ -85,7 +91,7 @@ class MultiplexedWsClient {
           }
         }
 
-        // 🌟 Reconnected to server: Flush all pending offline audio recordings immediately! 🌟
+        // Flush offline audio recordings upon server reconnection
         syncPendingAudios();
       };
 
@@ -110,7 +116,6 @@ class MultiplexedWsClient {
   scheduleReconnect() {
     if (this.reconnectTimer) return;
 
-    // 🌟 Wait 5 minutes between reconnect checks 🌟
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.rooms.size > 0 && this.status !== 'connected') {
@@ -170,7 +175,7 @@ class MultiplexedWsClient {
     const roomName = new TextDecoder().decode(buf.subarray(3, 3 + nameLen));
     const payload = buf.subarray(3 + nameLen);
 
-    // Guard: ignore empty payloads
+    // Empty payloads carry no sync instruction
     if (payload.length === 0) return;
 
     if (flag === MSG_PAYLOAD) {
@@ -181,26 +186,27 @@ class MultiplexedWsClient {
         try {
           const decoder = decoding.createDecoder(payload);
           const encoder = encoding.createEncoder();
-          
-          // Pass `this` as origin to prevent echo back into doc.on('update')!
+
+          // CRITICAL: Pass `this` as origin so doc.on('update') doesn't loop incoming messages
           doc.transact(() => {
             syncProtocol.readSyncMessage(decoder, encoder, doc, this);
           }, this);
 
-          // If reading sync generated a response (e.g. Step 2)
+          // If reading this sync message generated a response (e.g., Step 2 in response to Step 1)
           if (encoding.length(encoder) > 0) {
             this.sendPayload(roomName, encoding.toUint8Array(encoder));
           }
         } catch (err) {
-          // Prevent decoder exceptions from crashing the WebSocket listener
-          console.warn(`[Yjs Sync] Skipped invalid frame in "${roomName}":`, err);
+          console.warn(`[Yjs Sync] Error processing frame in room "${roomName}":`, err);
         }
       }
     }
   }
 
   registerRoom(roomName, doc, onStatusChange) {
-    if (!this.rooms.has(roomName)) {
+    const isFirstRegistration = !this.rooms.has(roomName);
+
+    if (isFirstRegistration) {
       this.rooms.set(roomName, new Set());
       this.sendSubscribe(roomName);
     }
@@ -208,10 +214,16 @@ class MultiplexedWsClient {
     const handler = { doc, onStatusChange };
     this.rooms.get(roomName).add(handler);
 
-    // Initial connection trigger
-    this.connect();
+    // If already connected, immediately start SyncStep1 for this room
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      const encoder = encoding.createEncoder();
+      syncProtocol.writeSyncStep1(encoder, doc);
+      this.sendPayload(roomName, encoding.toUint8Array(encoder));
+    } else {
+      this.connect();
+    }
 
-    // Hook Yjs local updates to broadcast to Rust backend
+    // Broadcast local document mutations outwards (ignoring updates originating from our server sync)
     const onDocUpdate = (update, origin) => {
       if (origin !== this) {
         const encoder = encoding.createEncoder();
@@ -221,7 +233,7 @@ class MultiplexedWsClient {
     };
     doc.on('update', onDocUpdate);
 
-    // Return cleanup hook
+    // Return unbind/cleanup callback
     return () => {
       doc.off('update', onDocUpdate);
       const set = this.rooms.get(roomName);

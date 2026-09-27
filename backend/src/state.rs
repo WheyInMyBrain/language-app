@@ -11,7 +11,7 @@ use yrs::Doc;
 
 pub struct Room {
     pub doc: Arc<RwLock<Doc>>,
-    pub bcast: broadcast::Sender<Bytes>,
+    pub bcast: broadcast::Sender<(u64, Bytes)>,
 }
 
 pub struct AppState {
