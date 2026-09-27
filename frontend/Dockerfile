@@ -14,4 +14,4 @@ FROM alpine:3.24
 WORKDIR /app
 COPY --from=builder /app/dist /app/dist
 # Copy /tmp/dist to /app/dist at container runtime so the named volume ALWAYS gets fresh files
-CMD ["sh", "-c", "cp -ru /tmp/dist/* /app/dist/ && echo 'Assets copied to volume'"]
+CMD ["sh", "-c", "cp -a /tmp/dist/. /app/dist/ && echo 'Assets copied successfully'"]
