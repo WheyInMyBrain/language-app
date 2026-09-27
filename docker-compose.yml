@@ -1,4 +1,12 @@
 services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: "no"
+    volumes:
+      - frontend_dist:/app/dist
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -10,8 +18,10 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - backend
-      - frontend
+      frontend:
+        condition: service_completed_successfully
+      backend:
+        condition: service_started
 
   backend:
     build:
@@ -24,14 +34,6 @@ services:
       - ./storage:/app/storage
     env_file:
       - .env
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    restart: "no"                         
-    volumes:
-      - frontend_dist:/app/dist           
 
 volumes:
   caddy_data:
