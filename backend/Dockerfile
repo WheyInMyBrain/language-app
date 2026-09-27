@@ -19,8 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Replace <your-binary-name> with the name in [package] name = "..." in Cargo.toml
-COPY --from=builder /app/target/release/<your-binary-name> /app/server
+COPY --from=builder /app/target/release/backend /app/server
 
 EXPOSE 3000
 
