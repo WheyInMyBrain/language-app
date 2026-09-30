@@ -25,15 +25,15 @@
   // Vector Icons
   import { 
     Sparkles, 
-    Compass,
-    ChevronLeft,
-    ChevronRight,
-    MessageSquare,
-    Play,
-    Headphones,
-    BookOpen,
-    Layers,
-    Plus
+    Compass, 
+    ChevronLeft, 
+    ChevronRight, 
+    MessageSquare, 
+    Play, 
+    Headphones, 
+    BookOpen, 
+    Layers, 
+    Plus 
   } from '@lucide/svelte';
 
   let { date, langCode, onSelectDate } = $props();
@@ -73,8 +73,8 @@
       return parsed.toLocaleDateString(undefined, { 
         weekday: 'short', 
         month: 'short', 
-        day: 'numeric',
-        year: 'numeric'
+        day: 'numeric', 
+        year: 'numeric' 
       });
     } catch {
       return date;
@@ -233,8 +233,9 @@
   }
 </script>
 
+<!-- Added 'w-full max-w-full overflow-x-clip' to lock horizontal scroll completely -->
 <div 
-  class="relative w-full max-w-5xl xl:max-w-6xl mx-auto space-y-6 pt-1 sm:pt-2 pb-24 px-2 sm:px-4 md:px-6 select-none box-border"
+  class="relative w-full max-w-full xl:max-w-6xl mx-auto space-y-6 pt-1 sm:pt-2 pb-24 px-2 sm:px-4 md:px-6 select-none box-border overflow-x-clip"
   style="--day-accent: {themeColor};"
 >
   {#if !isLoaded}
@@ -251,7 +252,7 @@
     </div>
   {:else}
 
-    <!-- 🌟 1. UNIFIED GLASS RAIL HEADER WITH CASCADE ENTRANCE 🌟 -->
+    <!-- 🌟 1. UNIFIED GLASS RAIL HEADER 🌟 -->
     <header class="bloom-cascade delay-1 flex items-center justify-between gap-3 pb-3 border-b border-[var(--border-subtle)] relative z-20 flex-wrap sm:flex-nowrap">
       
       <!-- Date Scrubber Capsule -->
@@ -317,7 +318,7 @@
       </div>
     </header>
 
-    <!-- 🌟 2. OMNIBAR DOCK WITH SECONDARY STAGGER 🌟 -->
+    <!-- 🌟 2. OMNIBAR DOCK 🌟 -->
     <div class="bloom-cascade delay-2 sticky top-2 z-40 w-full" style="contain: style;">
       <OmniBar
         {words}
@@ -338,12 +339,12 @@
       />
     </div>
 
-    <!-- 🌟 3. FILTER QUICK-JUMP CHIPS WITH OPTICAL BLOOM 🌟 -->
-    <div class="bloom-cascade delay-3 flex items-center gap-1.5 overflow-x-auto pb-1 pt-1 no-scrollbar z-20">
+    <!-- 🌟 3. FILTER QUICK-JUMP CHIPS (Touch-scrollable with max-w-full containment) 🌟 -->
+    <div class="bloom-cascade delay-3 flex items-center gap-1.5 overflow-x-auto pb-1 pt-1 no-scrollbar z-20 max-w-full">
       <button
         type="button"
         onclick={() => (activeFilter = 'all')}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border {activeFilter === 'all' 
+        class="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border {activeFilter === 'all' 
           ? 'bg-[var(--bg-surface-elevated)] border-[var(--border-hover)] text-[var(--text-primary)] shadow-xs scale-105' 
           : 'bg-[var(--bg-surface)]/80 border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'}"
       >
@@ -354,7 +355,7 @@
       <button
         type="button"
         onclick={() => (activeFilter = 'vocab')}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border"
+        class="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border"
         style="
           background-color: {activeFilter === 'vocab' ? `color-mix(in srgb, ${vocabColor} 18%, var(--bg-surface))` : 'var(--bg-surface)'};
           border-color: {activeFilter === 'vocab' ? vocabColor : 'var(--border-subtle)'};
@@ -368,7 +369,7 @@
       <button
         type="button"
         onclick={() => (activeFilter = 'ci')}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border"
+        class="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border"
         style="
           background-color: {activeFilter === 'ci' ? `color-mix(in srgb, ${ciColor} 18%, var(--bg-surface))` : 'var(--bg-surface)'};
           border-color: {activeFilter === 'ci' ? ciColor : 'var(--border-subtle)'};
@@ -382,7 +383,7 @@
       <button
         type="button"
         onclick={() => (activeFilter = 'listening')}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border"
+        class="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border"
         style="
           background-color: {activeFilter === 'listening' ? `color-mix(in srgb, ${listeningColor} 18%, var(--bg-surface))` : 'var(--bg-surface)'};
           border-color: {activeFilter === 'listening' ? listeningColor : 'var(--border-subtle)'};
@@ -396,7 +397,7 @@
       <button
         type="button"
         onclick={() => (activeFilter = 'grammar')}
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border"
+        class="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer border"
         style="
           background-color: {activeFilter === 'grammar' ? `color-mix(in srgb, ${grammarColor} 18%, var(--bg-surface))` : 'var(--bg-surface)'};
           border-color: {activeFilter === 'grammar' ? grammarColor : 'var(--border-subtle)'};
@@ -428,26 +429,25 @@
       </div>
     {:else}
 
-      <div class="space-y-12 pt-2 relative z-10">
+      <div class="space-y-12 pt-2 relative z-10 w-full max-w-full">
         
-        <!-- ============================================== -->
-        <!-- PAVILION 1: VOCABULARY AUTO-WALL               -->
-        <!-- ============================================== -->
+        <!-- PAVILION 1: VOCABULARY AUTO-WALL -->
         {#if activeFilter === 'all' || activeFilter === 'vocab'}
-          <section class="bloom-cascade delay-3 space-y-4 relative">
+          <section class="bloom-cascade delay-3 space-y-4 relative w-full overflow-hidden">
+            <!-- Clipped background glow -->
             <div 
-              class="pointer-events-none absolute -left-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
+              class="pointer-events-none absolute -left-12 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
               style="background: radial-gradient(circle at 0% 50%, {vocabColor}, transparent 75%);"
             ></div>
             <div 
-              class="pointer-events-none absolute -right-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
+              class="pointer-events-none absolute -right-12 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
               style="background: radial-gradient(circle at 100% 50%, {vocabColor}, transparent 75%);"
             ></div>
 
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-3 w-full">
               <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
               <div 
-                class="flex items-center gap-2 px-3.5 py-1 rounded-full bg-[var(--bg-surface)] border shadow-xs"
+                class="flex items-center gap-2 px-3.5 py-1 rounded-full bg-[var(--bg-surface)] border shadow-xs shrink-0"
                 style="border-color: color-mix(in srgb, {vocabColor} 30%, var(--border-subtle));"
               >
                 <MessageSquare size={12} style="color: {vocabColor};" />
@@ -462,11 +462,11 @@
             </div>
 
             {#if words.length > 0}
-              <div class="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 sm:gap-5 items-start">
+              <!-- Adaptive grid: min(100%, 280px) avoids forced horizontal growth on narrow screens -->
+              <div class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4 sm:gap-5 items-start w-full">
                 {#each words as word, i (`v_${word.id ?? word.word_index ?? i}`)}
-                  <!-- Staggered Card Mount Ripple -->
                   <div 
-                    class="card-ripple" 
+                    class="card-ripple min-w-0" 
                     style="animation-delay: {Math.min(i * 32, 400)}ms;"
                   >
                     <OmniCard
@@ -493,24 +493,22 @@
           </section>
         {/if}
 
-        <!-- ============================================== -->
-        <!-- PAVILION 2: COMPREHENSIBLE INPUT (Dynamic Bento) -->
-        <!-- ============================================== -->
+        <!-- PAVILION 2: COMPREHENSIBLE INPUT -->
         {#if activeFilter === 'all' || activeFilter === 'ci'}
-          <section class="bloom-cascade delay-4 space-y-4 relative">
+          <section class="bloom-cascade delay-4 space-y-4 relative w-full overflow-hidden">
             <div 
-              class="pointer-events-none absolute -left-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
+              class="pointer-events-none absolute -left-12 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
               style="background: radial-gradient(circle at 0% 50%, {ciColor}, transparent 75%);"
             ></div>
             <div 
-              class="pointer-events-none absolute -right-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
+              class="pointer-events-none absolute -right-12 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
               style="background: radial-gradient(circle at 100% 50%, {ciColor}, transparent 75%);"
             ></div>
 
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-3 w-full">
               <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
               <div 
-                class="flex items-center gap-2 px-3.5 py-1 rounded-full bg-[var(--bg-surface)] border shadow-xs"
+                class="flex items-center gap-2 px-3.5 py-1 rounded-full bg-[var(--bg-surface)] border shadow-xs shrink-0"
                 style="border-color: color-mix(in srgb, {ciColor} 30%, var(--border-subtle));"
               >
                 <Play size={12} style="color: {ciColor};" />
@@ -525,10 +523,10 @@
             </div>
 
             {#if ciActivities.length > 0}
-              <div class={ciActivities.length === 1 ? 'max-w-3xl mx-auto w-full' : 'grid grid-cols-1 lg:grid-cols-2 gap-5 items-start'}>
+              <div class={ciActivities.length === 1 ? 'max-w-3xl mx-auto w-full' : 'grid grid-cols-1 lg:grid-cols-2 gap-5 items-start w-full'}>
                 {#each ciActivities as activity, i (`ci_${activity.id ?? activity.item_index ?? i}`)}
                   <div 
-                    class="card-ripple" 
+                    class="card-ripple min-w-0" 
                     style="animation-delay: {Math.min(i * 45, 300)}ms;"
                   >
                     <OmniCard
@@ -555,24 +553,22 @@
           </section>
         {/if}
 
-        <!-- ============================================== -->
-        <!-- PAVILION 3: LISTENING IMMERSION (Dynamic Bento) -->
-        <!-- ============================================== -->
+        <!-- PAVILION 3: LISTENING IMMERSION -->
         {#if activeFilter === 'all' || activeFilter === 'listening'}
-          <section class="bloom-cascade delay-4 space-y-4 relative">
+          <section class="bloom-cascade delay-4 space-y-4 relative w-full overflow-hidden">
             <div 
-              class="pointer-events-none absolute -left-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
+              class="pointer-events-none absolute -left-12 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
               style="background: radial-gradient(circle at 0% 50%, {listeningColor}, transparent 75%);"
             ></div>
             <div 
-              class="pointer-events-none absolute -right-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
+              class="pointer-events-none absolute -right-12 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
               style="background: radial-gradient(circle at 100% 50%, {listeningColor}, transparent 75%);"
             ></div>
 
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-3 w-full">
               <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
               <div 
-                class="flex items-center gap-2 px-3.5 py-1 rounded-full bg-[var(--bg-surface)] border shadow-xs"
+                class="flex items-center gap-2 px-3.5 py-1 rounded-full bg-[var(--bg-surface)] border shadow-xs shrink-0"
                 style="border-color: color-mix(in srgb, {listeningColor} 30%, var(--border-subtle));"
               >
                 <Headphones size={12} style="color: {listeningColor};" />
@@ -587,10 +583,10 @@
             </div>
 
             {#if listeningActivities.length > 0}
-              <div class={listeningActivities.length === 1 ? 'max-w-3xl mx-auto w-full' : 'grid grid-cols-1 lg:grid-cols-2 gap-5 items-start'}>
+              <div class={listeningActivities.length === 1 ? 'max-w-3xl mx-auto w-full' : 'grid grid-cols-1 lg:grid-cols-2 gap-5 items-start w-full'}>
                 {#each listeningActivities as activity, i (`li_${activity.id ?? activity.item_index ?? i}`)}
                   <div 
-                    class="card-ripple" 
+                    class="card-ripple min-w-0" 
                     style="animation-delay: {Math.min(i * 45, 300)}ms;"
                   >
                     <OmniCard
@@ -617,24 +613,22 @@
           </section>
         {/if}
 
-        <!-- ============================================== -->
-        <!-- PAVILION 4: GRAMMAR & PATTERNS                 -->
-        <!-- ============================================== -->
+        <!-- PAVILION 4: GRAMMAR & PATTERNS -->
         {#if activeFilter === 'all' || activeFilter === 'grammar'}
-          <section class="bloom-cascade delay-5 space-y-4 relative">
+          <section class="bloom-cascade delay-5 space-y-4 relative w-full overflow-hidden">
             <div 
-              class="pointer-events-none absolute -left-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
+              class="pointer-events-none absolute -left-12 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
               style="background: radial-gradient(circle at 0% 50%, {grammarColor}, transparent 75%);"
             ></div>
             <div 
-              class="pointer-events-none absolute -right-24 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
+              class="pointer-events-none absolute -right-12 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
               style="background: radial-gradient(circle at 100% 50%, {grammarColor}, transparent 75%);"
             ></div>
 
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-3 w-full">
               <div class="flex-1 h-px bg-gradient-to-r from-transparent via-[var(--border-subtle)] to-transparent"></div>
               <div 
-                class="flex items-center gap-2 px-3.5 py-1 rounded-full bg-[var(--bg-surface)] border shadow-xs"
+                class="flex items-center gap-2 px-3.5 py-1 rounded-full bg-[var(--bg-surface)] border shadow-xs shrink-0"
                 style="border-color: color-mix(in srgb, {grammarColor} 30%, var(--border-subtle));"
               >
                 <BookOpen size={12} style="color: {grammarColor};" />
@@ -649,10 +643,10 @@
             </div>
 
             {#if grammarActivities.length > 0}
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5 items-start">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5 items-start w-full">
                 {#each grammarActivities as activity, i (`gr_${activity.id ?? activity.item_index ?? i}`)}
                   <div 
-                    class="card-ripple" 
+                    class="card-ripple min-w-0" 
                     style="animation-delay: {Math.min(i * 45, 300)}ms;"
                   >
                     <OmniCard
@@ -683,7 +677,7 @@
 
     {/if}
 
-    <!-- 🌟 5. BOTTOM SRS REVISION BAR WITH DOCKED RESOLUTION 🌟 -->
+    <!-- 🌟 5. BOTTOM SRS REVISION BAR 🌟 -->
     <div class="bloom-cascade delay-5 sticky bottom-3 z-40 w-full pt-4 pointer-events-none">
       <div class="pointer-events-auto w-full">
         <SRSBar {session} activeDate={date} onReview={handleSRSReview} />
@@ -695,7 +689,6 @@
 </div>
 
 <style>
-  /* 🌟 Volumetric Organic Bloom Unfurl 🌟 */
   @keyframes pageBloom {
     0% {
       opacity: 0;
@@ -709,7 +702,6 @@
     }
   }
 
-  /* 🌟 Subtle Card Ripple Cascade 🌟 */
   @keyframes cardPop {
     0% {
       opacity: 0;
