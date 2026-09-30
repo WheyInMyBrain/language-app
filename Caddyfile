@@ -1,7 +1,9 @@
-:80 {
+https://saee:443, https://100.88.222.48:443 {
+    tls /etc/ssl/server.crt /etc/ssl/server.key
+
     encode gzip zstd
 
-    # 1. Route backend traffic first (mutually exclusive)
+    # 1. Route backend traffic first
     handle /api* {
         reverse_proxy backend:3000
     }
