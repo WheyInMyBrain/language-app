@@ -276,6 +276,25 @@
     }
   }
 
+  async function handleAutoPaste(e, setterFn) {
+    const el = e.target;
+    // Only auto-paste if the input is currently empty to avoid wiping/appending unintentionally
+    if (el.value && el.value.trim().length > 0) return;
+
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+        const clipText = await navigator.clipboard.readText();
+        const text = clipText?.trim();
+        if (text) {
+          setterFn(text);
+        }
+      }
+    } catch (err) {
+      // Browser blocked permission or clipboard is empty/inaccessible; fail silently
+      console.debug('Clipboard auto-read unavailable or denied:', err);
+    }
+  }
+
   async function handleListeningInput(e) {
     listLink = e.target.value;
     triggerListeningDuplicateCheck(listLink);
@@ -679,6 +698,7 @@
                     bind:this={vLinkEl}
                     bind:value={vLink}
                     onkeydown={(e) => handleKeydown(e, vNativeEl)}
+                    onfocus={(e) => handleAutoPaste(e, (val) => { vLink = val; })}
                     type="text"
                     placeholder="1. Media URL (Direct Image, GIF, WebP)..."
                     class="{inputClass} {activeMediaPreview ? 'pl-11' : 'pl-3.5'}"
@@ -691,6 +711,10 @@
                     value={vNative}
                     oninput={handleNativeInput}
                     onkeydown={(e) => handleKeydown(e, vPronEl)}
+                    onfocus={(e) => handleAutoPaste(e, (val) => { 
+                      vNative = val; 
+                      handleNativeInput({ target: { value: val } }); 
+                    })}
                     type="text"
                     placeholder="2. Native script (汉语, 苹果)..."
                     class={inputClass}
@@ -712,6 +736,7 @@
                     value={vPron}
                     oninput={(e) => { vPron = e.target.value; isPronManuallyEdited = true; }}
                     onkeydown={(e) => handleKeydown(e, null)}
+                    onfocus={(e) => handleAutoPaste(e, (val) => { vPron = val; isPronManuallyEdited = true; })}
                     type="text"
                     placeholder="3. Pronunciation (hàn yǔ)..."
                     class="{inputClass} pr-9 font-mono"
@@ -742,6 +767,10 @@
                       const pasted = e.clipboardData?.getData('text') || '';
                       checkAndAutoFillCIDuration(pasted);
                     }}
+                    onfocus={(e) => handleAutoPaste(e, (val) => {
+                      ciLink = val;
+                      checkAndAutoFillCIDuration(val);
+                    })}
                     onkeydown={(e) => handleKeydown(e, ciDurationEl)}
                     type="text"
                     placeholder="1. Video URL (https://youtu.be/...)"
@@ -754,6 +783,7 @@
                     bind:this={ciDurationEl}
                     bind:value={ciDuration}
                     onkeydown={(e) => handleKeydown(e, null)}
+                    onfocus={(e) => handleAutoPaste(e, (val) => { ciDuration = val; })}
                     type="text"
                     placeholder={isFetchingCIDuration ? "Fetching duration..." : "2. Duration (14:20 or mm:ss)..."}
                     class="{inputClass} font-mono {isFetchingCIDuration ? 'animate-pulse text-amber-500' : ''}"
@@ -772,6 +802,11 @@
                       handleListeningInput(e);
                       checkAndAutoFillListDuration(e.target.value);
                     }}
+                    onfocus={(e) => handleAutoPaste(e, (val) => {
+                      listLink = val;
+                      handleListeningInput({ target: { value: val } });
+                      checkAndAutoFillListDuration(val);
+                    })}
                     onpaste={(e) => {
                       const pasted = e.clipboardData?.getData('text') || '';
                       checkAndAutoFillListDuration(pasted);
@@ -796,6 +831,7 @@
                   <input
                     bind:this={listDurationEl}
                     bind:value={listDuration}
+                    onfocus={(e) => handleAutoPaste(e, (val) => { listDuration = val; })}
                     onkeydown={(e) => handleKeydown(e, null)}
                     type="text"
                     placeholder={isFetchingListDuration ? "Fetching duration..." : "2. Minutes (20m, 15:30)..."}
@@ -811,6 +847,7 @@
                     bind:this={gTitleEl}
                     bind:value={gTitle}
                     onkeydown={(e) => handleKeydown(e, gPronEl)}
+                    onfocus={(e) => handleAutoPaste(e, (val) => { gTitle = val; })}
                     type="text"
                     placeholder="1. Grammar Point (e.g. 把字句)..."
                     class={inputClass}
@@ -821,6 +858,7 @@
                   <input
                     bind:this={gPronEl}
                     bind:value={gPron}
+                    onfocus={(e) => handleAutoPaste(e, (val) => { gPron = val; })}
                     onkeydown={(e) => handleKeydown(e, gStructureEl)}
                     type="text"
                     placeholder="2. Reading (bǎ zìjù)..."
@@ -832,6 +870,7 @@
                   <input
                     bind:this={gStructureEl}
                     bind:value={gStructure}
+                    onfocus={(e) => handleAutoPaste(e, (val) => { gStructure = val; })}
                     onkeydown={(e) => handleKeydown(e, gMeaningEl)}
                     type="text"
                     placeholder="3. Formula (Subj + 把 + Obj + Verb)..."
@@ -843,6 +882,7 @@
                   <input
                     bind:this={gMeaningEl}
                     bind:value={gMeaning}
+                    onfocus={(e) => handleAutoPaste(e, (val) => { gMeaning = val; })}
                     onkeydown={(e) => handleKeydown(e, gLinkEl)}
                     type="text"
                     placeholder="4. Meaning / Usage explanation..."
@@ -854,6 +894,7 @@
                   <input
                     bind:this={gLinkEl}
                     bind:value={gLink}
+                    onfocus={(e) => handleAutoPaste(e, (val) => { gLink = val; })}
                     onkeydown={(e) => handleKeydown(e, null)}
                     type="text"
                     placeholder="5. Reference link / Diagram (optional)..."
