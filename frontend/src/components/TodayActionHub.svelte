@@ -97,6 +97,11 @@
   let ciColor = $derived(colors.ci?.primary || colors.ci?.dark_primary || '#a855f7');
   let grammarColor = $derived(colors.grammar?.primary || colors.grammar?.dark_primary || '#0ea5e9');
 
+  // SRS Deck specific color tokens used in the template
+  let flashcardColor = $derived(colors.flashcard?.primary || colors.flashcard?.dark_primary || '#f43f5e');
+  let audioColor = $derived(colors.listening?.primary || colors.listening?.dark_primary || '#f97316');
+  let writingColor = $derived(colors.speaking?.primary || colors.speaking?.dark_primary || '#c026d3');
+
   let concentricRings = $derived([
     {
       id: 'vocab',
