@@ -29,6 +29,7 @@
   let entries = $derived(metadataStore.sortedCalendarEntries || []);
   let milestones = $derived(activeLanguage.milestones || {});
   let colors = $derived(activeLanguage.colors || {});
+  let goals = $derived(activeLanguage.goals || {});
 
   let activeChartTab = $state('vocab'); // 'vocab' | 'listening' | 'speaking'
   let activeHeatmapTab = $state('vocab'); // 'vocab' | 'listening' | 'speaking'
@@ -38,7 +39,8 @@
   // 1. Core Aggregate Totals
   let aggregates = $derived.by(() => {
     let vocab = 0, grammar = 0, ci = 0, listeningSec = 0, speakingSec = 0;
-    for (let i = 0; i < entries.length; i++) {
+    const len = entries.length;
+    for (let i = 0; i < len; i++) {
       const e = entries[i];
       vocab += e.word || 0;
       grammar += e.grammar || 0;
@@ -80,7 +82,8 @@
   // 3. Milestones with ETA Forecasts
   let milestoneStats = $derived.by(() => {
     const vocabDailies = [], listenDailies = [], speakDailies = [];
-    for (let i = 0; i < entries.length; i++) {
+    const len = entries.length;
+    for (let i = 0; i < len; i++) {
       const e = entries[i];
       if (e.word > 0) vocabDailies.push(e.word);
       if (e.listening_time > 0) listenDailies.push(e.listening_time);
@@ -122,41 +125,51 @@
     ];
   });
 
-  // 4. D3 Math Engine
+  // 4. D3 Math Engine (Zero-Copy Iteration)
   const WIDTH = 480;
   const HEIGHT = 180;
   const MARGIN = { top: 24, right: 16, bottom: 28, left: 16 };
 
   let chartModel = $derived.by(() => {
-    if (entries.length === 0) return null;
+    const len = entries.length;
+    if (len === 0) return null;
 
-    const asc = [...entries].reverse();
     let running = 0;
-    const data = [];
+    const data = new Array(len);
 
-    for (let i = 0; i < asc.length; i++) {
+    // entries is sorted descending (newest -> oldest). 
+    // Loop backwards to build ascending order without allocating a `.reverse()` array.
+    let writeIdx = 0;
+    for (let i = len - 1; i >= 0; i--) {
+      const e = entries[i];
       if (activeChartTab === 'vocab') {
-        running += asc[i].word || 0;
+        running += e.word || 0;
       } else if (activeChartTab === 'listening') {
-        running += (asc[i].listening_time || 0) / 3600;
+        running += (e.listening_time || 0) / 3600;
       } else {
-        running += (asc[i].speaking_time || 0) / 3600;
+        running += (e.speaking_time || 0) / 3600;
       }
-      data.push({
-        dateStr: asc[i].date,
-        date: new Date(asc[i].date),
+
+      // Fast UTC timestamp parsing
+      const y = +e.date.slice(0, 4);
+      const m = +e.date.slice(5, 7) - 1;
+      const d = +e.date.slice(8, 10);
+
+      data[writeIdx++] = {
+        dateStr: e.date,
+        date: new Date(Date.UTC(y, m, d)),
         value: running
-      });
+      };
     }
 
-    const peak = data[data.length - 1]?.value || 1;
+    const peak = data[len - 1]?.value || 1;
     const maxVal = Math.max(
       activeChartTab === 'vocab' ? 10 : 1, 
       Math.ceil(peak * 1.15)
     );
 
     const xScale = scaleTime()
-      .domain([data[0].date, data[data.length - 1].date])
+      .domain([data[0].date, data[len - 1].date])
       .range([MARGIN.left, WIDTH - MARGIN.right]);
 
     const yScale = scaleLinear()
@@ -174,9 +187,6 @@
       .y1(d => yScale(d.value))
       .curve(curveMonotoneX);
 
-    const linePath = lineGen(data);
-    const areaPath = areaGen(data);
-
     const points = data.map(d => ({
       ...d,
       x: xScale(d.date),
@@ -185,13 +195,13 @@
 
     return {
       points,
-      linePath,
-      areaPath,
+      linePath: lineGen(data),
+      areaPath: areaGen(data),
       maxVal: activeChartTab === 'vocab' ? Math.round(maxVal) : maxVal.toFixed(1),
       midVal: activeChartTab === 'vocab' ? Math.round(maxVal / 2) : (maxVal / 2).toFixed(1),
       startDate: data[0]?.dateStr.slice(5),
-      endDate: data[data.length - 1]?.dateStr.slice(5),
-      currentTotal: data[data.length - 1]?.value || 0
+      endDate: data[len - 1]?.dateStr.slice(5),
+      currentTotal: data[len - 1]?.value || 0
     };
   });
 
@@ -207,7 +217,8 @@
     let closest = chartModel.points[0];
     let minDiff = Infinity;
     const pts = chartModel.points;
-    for (let i = 0; i < pts.length; i++) {
+    const len = pts.length;
+    for (let i = 0; i < len; i++) {
       const diff = Math.abs(pts[i].x - svgX);
       if (diff < minDiff) {
         minDiff = diff;
@@ -217,34 +228,22 @@
     hoveredPoint = closest;
   }
 
-  // 5. Heatmap Matrix
-  function toLocalDateStr(d) {
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-
+  // 5. Heatmap Matrix ($O(1)$ Direct Calendar Index Lookup)
   function formatTileTime(sec) {
     if (!sec || sec <= 0) return '0s';
     if (sec < 60) return `${sec}s`;
-    const mins = Math.round(sec / 60);
-    return `${mins}m`;
+    return `${Math.round(sec / 60)}m`;
   }
 
   let heatmapWeeks = $derived.by(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const logMap = new Map();
-    for (let i = 0; i < entries.length; i++) {
-      logMap.set(entries[i].date, entries[i]);
-    }
-
-    const goals = activeLanguage.goals || {};
     const vocabGoal = goals.vocab || 20;
     const listenGoalSec = (goals.listening_minutes || goals.listening || 45) * 60;
     const speakGoalSec = (goals.speaking_minutes || goals.speaking || 10) * 60;
+    const langCode = activeLanguage.code || 'zh-CN';
+    const calIndex = metadataStore.calendarIndex;
 
     function calculateTier(value, target) {
       if (!value || value <= 0) return 0;
@@ -263,8 +262,14 @@
       for (let d = 0; d < 7; d++) {
         const cur = new Date(start);
         cur.setDate(start.getDate() + (w * 7 + d));
-        const dt = toLocalDateStr(cur);
-        const log = logMap.get(dt);
+        
+        const y = cur.getFullYear();
+        const m = cur.getMonth() + 1;
+        const dtDay = cur.getDate();
+        const dt = `${y}-${m < 10 ? '0' + m : m}-${dtDay < 10 ? '0' + dtDay : dtDay}`;
+
+        // Direct O(1) hash lookup from store
+        const log = calIndex[`${langCode}:${dt}`];
 
         const wCount = log?.word || 0;
         const lSec = log?.listening_time || 0;

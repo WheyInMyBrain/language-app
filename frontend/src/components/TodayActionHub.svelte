@@ -28,19 +28,19 @@
 
   let { onSelectDate } = $props();
 
-  function formatLocalDate(d) {
+  // 1. Reactive Date Resolver (Self-healing across midnight)
+  let todayStr = $derived.by(() => {
+    const d = new Date();
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
-  }
+  });
 
-  const now = new Date();
-  const todayStr = formatLocalDate(now);
-
-  // 1. Reactive Store Bindings
-  let langCode = $derived(metadataStore.activeLanguage);
+  // 2. Reactive Store Bindings
+  let langCode = $derived(metadataStore.activeLanguage || 'zh-CN');
   let colors = $derived(activeLanguage.colors || {});
+  let goals = $derived(activeLanguage.goals || {});
   let themeColor = $derived(activeLanguage.themeColor || '#a855f7');
 
   let todayKey = $derived(`${langCode}:${todayStr}`);
@@ -52,9 +52,13 @@
   let ciDone = $derived(todayLog?.ci || 0);
   let grammarDone = $derived(todayLog?.grammar || 0);
 
-  // 🌟 2. Unified Daily Conductor Hook 🌟
+  // 🌟 3. Unified Daily Conductor Hook (Tied to Store Invalidations) 🌟
   let manifest = $derived.by(() => {
-    return getDailyMissionManifest(todayStr);
+    // Touch reactive dependencies so manifest re-evaluates when calendar updates
+    const _cal = metadataStore.calendarIndex;
+    const _lang = langCode;
+    if (!_lang || !todayStr) return {};
+    return getDailyMissionManifest(todayStr, _lang) || {};
   });
 
   let dynamicGoals = $derived(manifest.goals || {});
@@ -67,7 +71,7 @@
   let todayRevisions = $derived((manifest.revisions || []).filter(r => r.urgencyCategory === 'today'));
   let overdueRevisions = $derived((manifest.revisions || []).filter(r => r.urgencyCategory === 'overdue'));
 
-  // Catch-Up Speech Audio Batch (With fixed quota and completed tracking)
+  // Catch-Up Speech Audio Batch
   let catchUpAudio = $derived(manifest.unvoiced || { surfaced: [], quota: 5, completedCount: 0, hiddenCount: 0 });
 
   // Interactive Hover State
@@ -87,17 +91,23 @@
     { radius: 32, stroke: 8.5 }  // 5. Grammar (Inner)
   ];
 
+  let vocabColor = $derived(colors.vocab?.primary || colors.vocab?.dark_primary || '#10b981');
+  let listeningColor = $derived(colors.listening?.primary || colors.listening?.dark_primary || '#f97316');
+  let speakingColor = $derived(colors.speaking?.primary || colors.speaking?.dark_primary || '#ec4899');
+  let ciColor = $derived(colors.ci?.primary || colors.ci?.dark_primary || '#a855f7');
+  let grammarColor = $derived(colors.grammar?.primary || colors.grammar?.dark_primary || '#0ea5e9');
+
   let concentricRings = $derived([
     {
       id: 'vocab',
       title: 'Vocabulary',
       icon: MessageSquare,
       current: vocabDone,
-      target: dynamicGoals.vocab?.target || 5,
-      baseline: dynamicGoals.vocab?.baseline || 5,
+      target: dynamicGoals.vocab?.target ?? goals.vocab ?? 5,
+      baseline: dynamicGoals.vocab?.baseline ?? goals.vocab ?? 5,
       zone: dynamicGoals.vocab?.zone || 'homeostasis',
       unit: 'w',
-      color: colors.vocab?.primary || colors.vocab?.dark_primary || '#10b981',
+      color: vocabColor,
       colorSub: colors.vocab?.light_primary || '#34d399',
       ...CONCENTRIC_CONFIG[0]
     },
@@ -106,11 +116,11 @@
       title: 'Listening',
       icon: Headphones,
       current: listeningMinDone,
-      target: dynamicGoals.listening?.target || 45,
-      baseline: dynamicGoals.listening?.baseline || 45,
+      target: dynamicGoals.listening?.target ?? goals.listening_minutes ?? 45,
+      baseline: dynamicGoals.listening?.baseline ?? goals.listening_minutes ?? 45,
       zone: dynamicGoals.listening?.zone || 'homeostasis',
       unit: 'm',
-      color: colors.listening?.primary || colors.listening?.dark_primary || '#f97316',
+      color: listeningColor,
       colorSub: colors.listening?.light_primary || '#fb923c',
       ...CONCENTRIC_CONFIG[1]
     },
@@ -119,11 +129,11 @@
       title: 'Speaking',
       icon: Mic,
       current: speakingMinDone,
-      target: dynamicGoals.speaking?.target || 10,
-      baseline: dynamicGoals.speaking?.baseline || 10,
+      target: dynamicGoals.speaking?.target ?? goals.speaking_minutes ?? 10,
+      baseline: dynamicGoals.speaking?.baseline ?? goals.speaking_minutes ?? 10,
       zone: dynamicGoals.speaking?.zone || 'homeostasis',
       unit: 'm',
-      color: colors.speaking?.primary || colors.speaking?.dark_primary || '#ec4899',
+      color: speakingColor,
       colorSub: colors.speaking?.light_primary || '#f472b6',
       ...CONCENTRIC_CONFIG[2]
     },
@@ -132,11 +142,11 @@
       title: 'CI Video',
       icon: Play,
       current: ciDone,
-      target: activeLanguage.goals?.ci || 1,
-      baseline: activeLanguage.goals?.ci || 1,
+      target: dynamicGoals.ci?.target ?? goals.ci ?? 1,
+      baseline: dynamicGoals.ci?.baseline ?? goals.ci ?? 1,
       zone: 'homeostasis',
       unit: 'v',
-      color: colors.ci?.primary || colors.ci?.dark_primary || '#a855f7',
+      color: ciColor,
       colorSub: colors.ci?.light_primary || '#c084fc',
       ...CONCENTRIC_CONFIG[3]
     },
@@ -145,11 +155,11 @@
       title: 'Grammar',
       icon: BookOpen,
       current: grammarDone,
-      target: activeLanguage.goals?.grammar || 1,
-      baseline: activeLanguage.goals?.grammar || 1,
+      target: dynamicGoals.grammar?.target ?? goals.grammar ?? 1,
+      baseline: dynamicGoals.grammar?.baseline ?? goals.grammar ?? 1,
       zone: 'homeostasis',
       unit: 'p',
-      color: colors.grammar?.primary || colors.grammar?.dark_primary || '#0ea5e9',
+      color: grammarColor,
       colorSub: colors.grammar?.light_primary || '#38bdf8',
       ...CONCENTRIC_CONFIG[4]
     }
@@ -179,11 +189,6 @@
 
   let hasTodayLog = $derived(todayLog !== null);
   let overdueCount = $derived(overdueRevisions.length);
-
-  let flashcardColor = $derived(colors.flashcard?.primary || colors.flashcard?.dark_primary || '#f43f5e');
-  let audioColor = $derived(colors.listening?.primary || colors.listening?.dark_primary || '#f97316');
-  let writingColor = $derived(colors.speaking?.primary || colors.speaking?.dark_primary || '#c026d3');
-  let vocabColor = $derived(colors.vocab?.primary || colors.vocab?.dark_primary || '#10b981');
 
   function getUrgencyStyles(item) {
     if (item.urgencyCategory === 'today') {
