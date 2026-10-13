@@ -61,3 +61,36 @@ storage/uploads/
 # Keep storage folder structure tracked in git
 !storage/database/.gitkeep
 !storage/backups/.gitkeep
+
+# ==========================================
+# Apple / iOS (Xcode, XcodeGen, Swift)
+# ==========================================
+# XcodeGen generates this locally; do not track generated project bundles
+ios/*.xcodeproj
+ios/*.xcworkspace
+
+# Xcode build products and indexing data
+ios/DerivedData/
+ios/build/
+.build/
+
+# User-specific Xcode state (in case an xcodeproj is opened)
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+
+# Swift Package Manager and CocoaPods (if used)
+ios/.swiftpm/
+ios/Packages/
+ios/Pods/
+
+# Temporary and device build archives
+*.ipa
+*.dSYM.zip
+*.dSYM
