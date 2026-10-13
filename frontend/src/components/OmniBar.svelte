@@ -21,7 +21,8 @@
     CornerDownLeft,
     Film,
     ChevronDown,
-    Sparkles 
+    Sparkles,
+    Check
   } from '@lucide/svelte';
 
   let {
@@ -62,13 +63,13 @@
 
   let isCompact = $derived(isScrolledPast && !isManuallyOpened);
 
-  // 🌟 Dynamic Language & Directionality Bindings 🌟
+  // Dynamic Language & Directionality Bindings
   let langConfig = $derived(activeLanguage.current || {});
   let isRTL = $derived(langConfig.dir === 'rtl' || (langConfig.code && langConfig.code.startsWith('ar')));
 
-  // 🌟 Dynamic Targets Computed via momentumEngine 🌟
+  // Dynamic Targets Computed via momentumEngine
   let dynamicGoals = $derived.by(() => {
-    return getAllAdaptiveGoals();
+    return getAllAdaptiveGoals ? getAllAdaptiveGoals() : {};
   });
 
   // --- 1. VOCAB STATES ---
@@ -308,8 +309,8 @@
           setterFn(text);
         }
       }
-    } catch (err) {
-      console.debug('Clipboard auto-read unavailable or denied:', err);
+    } catch {
+      // Silently ignore clipboard permission errors when user tabs in
     }
   }
 
@@ -425,7 +426,6 @@
   }
 
   async function handleFormSubmit() {
-    // 🛡️ Strict debounce lock to guarantee no duplicate submissions
     if (isSubmitting) return;
     isSubmitting = true;
 
@@ -479,6 +479,9 @@
           link: cleanUrl,
           durationInput: listDuration
         });
+
+        // Ensure durationSec is explicitly passed as a number
+        payload.durationSec = durationSec;
 
         if (isEditMode) {
           if (onUpdateListening) await onUpdateListening(selectedIndex, payload);
@@ -909,8 +912,13 @@
                   class="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 sm:py-2 rounded-xl sm:rounded-2xl text-xs font-bold text-white shadow-lg active:scale-95 transition-all duration-75 cursor-pointer disabled:opacity-50"
                   style="background: linear-gradient(135deg, var(--omni-color), var(--omni-color-sub)); box-shadow: 0 4px 14px -2px var(--omni-color);"
                 >
-                  <Plus size={13} strokeWidth={2.8} />
-                  <span>{isEditMode ? `Update #${selectedIndex}` : `Add ${CATEGORIES.find(c => c.id === activeTab).label}`}</span>
+                  {#if isEditMode}
+                    <Check size={13} strokeWidth={2.8} />
+                    <span>Update #{selectedIndex}</span>
+                  {:else}
+                    <Plus size={13} strokeWidth={2.8} />
+                    <span>Add {CATEGORIES.find(c => c.id === activeTab).label}</span>
+                  {/if}
                 </button>
 
                 {#if currentList.length > 0}

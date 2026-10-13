@@ -1,39 +1,33 @@
-// frontend/src/lib/services/srsService.js
-import { getDocHandle } from '../yjs.js';
+import { initLocalDatabase, stageLocalMutation } from '../db.js';
 import { calculateNextSRSState, calculateWeightedListeningTime } from '../srsEngine.js';
+import { metadataStore } from '../stores/metadata.svelte.js';
 
 export async function processSessionSRSReview({
   langCode,
   dateStr,
-  dayDocHandle,
   grade,
   todayStr = new Date().toISOString().substring(0, 10)
 }) {
-  if (!dayDocHandle?.doc) {
-    throw new Error('Day document handle is missing.');
-  }
-
-  const { doc: dayDoc } = dayDocHandle;
-  const metaMap = dayDoc.getMap('meta');
-  const activitiesArray = dayDoc.getArray('activities');
-  const sessionData = metaMap.get('session') || {};
-
-  // Resolve root calendar entry as fallback for revision count
-  const metaHandle = getDocHandle('global:metadata');
-  let calendarEntry = null;
+  const db = await initLocalDatabase();
   const calKey = `${langCode}:${dateStr}`;
 
-  if (metaHandle?.doc) {
-    const calendarIndex = metaHandle.doc.getMap('calendar_index');
-    calendarEntry = calendarIndex.get(calKey);
-  }
+  // 1. Fetch current daily_log record (or read from metadataStore cache)
+  const existingRecord = (await db.get('daily_logs', calKey)) || metadataStore.calendarIndex[calKey] || {
+    id: calKey,
+    lang_code: langCode,
+    log_date: dateStr,
+    revision: 0,
+    interval: 0,
+    ease: 2.50,
+    due_date: dateStr,
+    last_reviewed: null
+  };
 
-  // Exact fallback resolution matching the migration schema
-  const currentRev = Number(sessionData.revision ?? calendarEntry?.revision ?? 0);
-  const currentInterval = Number(sessionData.interval ?? 0);
-  const currentEase = Number(sessionData.ease ?? 2.50);
+  const currentRev = Number(existingRecord.revision ?? 0);
+  const currentInterval = Number(existingRecord.interval ?? 0);
+  const currentEase = Number(existingRecord.ease ?? 2.50);
 
-  // 1. Calculate next SM-2 state
+  // 2. Calculate next SRS state
   const nextState = calculateNextSRSState({
     currentRev,
     currentInterval,
@@ -42,43 +36,31 @@ export async function processSessionSRSReview({
     todayStr
   });
 
-  // 2. Upgrade 'meta.session' in Day Room
-  dayDoc.transact(() => {
-    metaMap.set('session', {
-      ...sessionData,
-      revision: nextState.revision,
-      interval: nextState.interval,
-      ease: nextState.ease,
-      due_date: nextState.due_date,
-      last_reviewed: nextState.last_reviewed
-    });
-  });
+  // 3. Load activities for this day to recalculate weighted listening duration
+  const activities = await db.getAllFromIndex('activities', 'by_lang_date', [langCode, dateStr]);
+  const activeActivities = activities.filter((a) => !a.deleted_at);
+  const newListeningTime = calculateWeightedListeningTime(activeActivities, nextState.revision);
 
-  // 3. Upgrade 'calendar_index' in Root Catalog
-  if (metaHandle?.doc) {
-    const calendarIndex = metaHandle.doc.getMap('calendar_index');
-    const existingCal = calendarIndex.get(calKey) || {
-      revision: 0,
-      word: 0,
-      ci: 0,
-      grammar: 0,
-      listening: 0,
-      speaking_time: 0,
-      listening_time: 0,
-      due_date: null
-    };
+  // 4. Construct updated daily_log entry
+  const updatedEntry = {
+    ...existingRecord,
+    id: calKey,
+    lang_code: langCode,
+    log_date: dateStr,
+    revision: nextState.revision,
+    interval: nextState.interval,
+    ease: nextState.ease,
+    due_date: nextState.due_date,
+    last_reviewed: nextState.last_reviewed,
+    listening_time: newListeningTime
+  };
 
-    // Recalculate dynamic weighted listening duration: (min(3, rev) * ci) + listening
-    const currentActivities = activitiesArray.toArray();
-    const newListeningTime = calculateWeightedListeningTime(currentActivities, nextState.revision);
+  // 5. Stage write locally and enqueue for sync
+  await stageLocalMutation('daily_logs', calKey, updatedEntry);
 
-    calendarIndex.set(calKey, {
-      ...existingCal,
-      revision: nextState.revision,
-      due_date: nextState.due_date,
-      listening_time: newListeningTime
-    });
-  }
+  // 6. Update in-memory metadataStore state and trigger streak re-evaluation
+  metadataStore.calendarIndex[calKey] = updatedEntry;
+  metadataStore.queueStreakRecalc(langCode);
 
   return nextState;
 }

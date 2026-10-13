@@ -21,6 +21,14 @@
 
   let { onSelectDate = null } = $props();
 
+  $effect(() => {
+    const code = activeLanguage.code;
+    if (code) {
+      ciIndexStore.connect(code);
+      listeningIndexStore.connect(code);
+    }
+  });
+
   let colors = $derived(activeLanguage.colors || {});
   let themeColor = $derived(activeLanguage.themeColor || '#a855f7');
   let accentColor = $derived(colors.ci?.primary || colors.ci?.dark_primary || themeColor);

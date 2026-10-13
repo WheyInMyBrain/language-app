@@ -1,30 +1,32 @@
-import { createSyncedDoc } from '../yjs.js';
+import { initLocalDatabase } from '../db.js';
 import { canonicalizeVideoUrl } from '../mediaResolver.js';
 
 class ListeningIndexStore {
   entries = $state([]); // [{ date, link }]
-  #handle = null;
   #currentLang = null;
 
-  connect(langCode) {
-    if (this.#currentLang === langCode && this.#handle) return;
-    if (this.#handle) this.#handle.destroy();
+  async connect(langCode) {
+    if (!langCode) return;
+    if (this.#currentLang === langCode && this.entries.length > 0) return;
 
     this.#currentLang = langCode;
-    const roomName = `${langCode}:listening_index`;
-    this.#handle = createSyncedDoc(roomName);
+    await this.refresh();
+  }
 
-    const { doc, idbProvider } = this.#handle;
-    const entriesArray = doc.getArray('entries');
+  async refresh() {
+    if (!this.#currentLang) return;
+    const db = await initLocalDatabase();
 
-    const sync = () => {
-      this.entries = entriesArray.toArray();
-    };
+    const tx = db.transaction('activities', 'readonly');
+    const allActs = await tx.store.getAll();
+    await tx.done;
 
-    idbProvider.on('synced', sync);
-    entriesArray.observe(sync);
-
-    if (idbProvider.synced) sync();
+    this.entries = allActs
+      .filter((a) => a.lang_code === this.#currentLang && a.activity_type === 'listening' && !a.deleted_at && a.link)
+      .map((a) => ({
+        date: a.log_date,
+        link: a.link
+      }));
   }
 
   findMatches(rawUrl, excludeDate = null) {

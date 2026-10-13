@@ -2,7 +2,7 @@
 <script>
   import { onDestroy, tick } from 'svelte';
   import { resolveAudioSource, saveAudioRecord } from '../lib/audioSync.js';
-  import { getDocHandle, createSyncedDoc } from '../lib/yjs.js';
+  import { initLocalDatabase, stageLocalMutation } from '../lib/db.js';
   import { metadataStore } from '../lib/stores/metadata.svelte.js';
   import { recordingStore } from '../lib/stores/recordingStore.svelte.js';
   import { recordCatchUpCompleted } from '../lib/services/momentumEngine.js';
@@ -84,51 +84,52 @@
     return '';
   }
 
-  function persistDurationLocally(seconds) {
-    const roomName = `${lang}:${date}`;
-    const handle = getDocHandle(roomName) || createSyncedDoc(roomName);
-    if (!handle?.doc) return;
-
+  async function persistDurationLocally(seconds) {
+    const db = await initLocalDatabase();
     const itemIdx = Number(item.word_index ?? item.item_index ?? item.id ?? index);
 
     if (type === 'vocab') {
-      const wordsArr = handle.doc.getArray('words');
-      const list = wordsArr.toArray().flat();
-      const targetIdx = list.findIndex((w) => Number(w.word_index ?? w.id) === itemIdx);
+      let targetWord = null;
 
-      if (targetIdx !== -1) {
-        handle.doc.transact(() => {
-          const updated = { ...list[targetIdx], audio_duration: seconds };
-          wordsArr.delete(targetIdx, 1);
-          wordsArr.insert(targetIdx, [updated]);
-        });
+      if (item.id) {
+        targetWord = await db.get('words', item.id);
+      } else {
+        const words = await db.getAllFromIndex('words', 'by_lang_date', [lang, date]);
+        targetWord = words.find((w) => Number(w.word_index ?? w.id) === itemIdx && !w.deleted_at);
+      }
+
+      if (targetWord) {
+        const updated = { ...targetWord, audio_duration: seconds };
+        await stageLocalMutation('words', updated.id, updated);
       }
     } else {
-      const actsArr = handle.doc.getArray('activities');
-      const list = actsArr.toArray().flat();
-      const targetIdx = list.findIndex(
-        (a) => a.activity_type === type && Number(a.item_index) === itemIdx
-      );
+      let targetAct = null;
 
-      if (targetIdx !== -1) {
-        handle.doc.transact(() => {
-          const updated = { ...list[targetIdx], audio_duration: seconds };
-          actsArr.delete(targetIdx, 1);
-          actsArr.insert(targetIdx, [updated]);
-        });
+      if (item.id) {
+        targetAct = await db.get('activities', item.id);
+      } else {
+        const acts = await db.getAllFromIndex('activities', 'by_lang_date', [lang, date]);
+        targetAct = acts.find(
+          (a) => a.activity_type === type && Number(a.item_index) === itemIdx && !a.deleted_at
+        );
+      }
+
+      if (targetAct) {
+        const updated = { ...targetAct, audio_duration: seconds };
+        await stageLocalMutation('activities', updated.id, updated);
       }
     }
 
-    metadataStore.refreshDayTotals(lang, date);
+    await metadataStore.refreshDayTotals(lang, date);
     if (onDurationChange) onDurationChange(seconds);
 
-    // 🌟 Catch-Up Task Registration: Past dates receiving audio 🌟
+    // Past dates receiving audio triggers catch-up rewards
     if (date && date < todayStr && (type === 'vocab' || category === 'vocab')) {
       recordCatchUpCompleted(date, itemIdx, todayStr, lang);
     }
   }
 
-  // 🌟 FULL-SPECTRUM BALANCED HUMAN VOICE AUDIOGRAPH 🌟
+  // Live Audiograph Visualizer
   async function startVisualizer(stream) {
     await tick();
 
@@ -199,7 +200,8 @@
           const x = i * (barWidth + gap);
           const y = height - barHeight;
 
-          ctx.fillStyle = `color-mix(in srgb, ${accentColor} ${Math.round(25 + normalized * 65)}%, transparent)`;
+          const fillOpacity = Math.round(25 + normalized * 65);
+          ctx.fillStyle = `color-mix(in srgb, ${accentColor} ${fillOpacity}%, transparent)`;
           ctx.beginPath();
           ctx.roundRect(x, y, barWidth, barHeight, [2, 2, 0, 0]);
           ctx.fill();
@@ -289,7 +291,7 @@
         recordedDuration = finalDuration;
         isPendingSync = true;
 
-        persistDurationLocally(finalDuration);
+        await persistDurationLocally(finalDuration);
 
         const wasUploaded = await saveAudioRecord({
           lang,
@@ -444,7 +446,7 @@
     </button>
   </div>
 
-  <!-- 🌟 LIVE AUDIOGRAPH CANVAS 🌟 -->
+  <!-- LIVE AUDIOGRAPH CANVAS -->
   {#if isRecording}
     <div class="relative w-full h-16 rounded-xl overflow-hidden bg-black/50 border border-white/10 flex items-center justify-center shadow-inner">
       <canvas

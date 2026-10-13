@@ -25,6 +25,14 @@
     onSelectDate = null 
   } = $props();
 
+  $effect(() => {
+    const code = langCode || activeLanguage.code;
+    if (code) {
+      srsStore.connect(code);
+      vocabIndexStore.connect(code);
+    }
+  });
+
   let todayStr = new Date().toISOString().substring(0, 10);
 
   let colors = $derived(activeLanguage.colors || {});

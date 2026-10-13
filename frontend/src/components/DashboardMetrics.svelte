@@ -1,7 +1,9 @@
 <!-- frontend/src/components/DashboardMetrics.svelte -->
 <script>
+  import { onMount } from 'svelte';
   import { metadataStore } from '../lib/stores/metadata.svelte.js';
   import { activeLanguage } from '../lib/stores/activeLanguage.svelte.js';
+  import { initLocalDatabase } from '../lib/db.js';
   import { 
     formatHoursMins, 
     calculateMedian, 
@@ -25,8 +27,8 @@
     Sparkles 
   } from '@lucide/svelte';
 
-  let currentLang = $derived(metadataStore.currentLanguageData || {});
-  let entries = $derived(metadataStore.sortedCalendarEntries || []);
+  let currentLangCode = $derived(activeLanguage.code || metadataStore.activeLanguage || 'zh-CN');
+  let currentLang = $derived(metadataStore.languages?.[currentLangCode] || metadataStore.currentLanguageData || {});
   let milestones = $derived(activeLanguage.milestones || {});
   let colors = $derived(activeLanguage.colors || {});
   let goals = $derived(activeLanguage.goals || {});
@@ -36,21 +38,59 @@
   let inspectedDay = $state(null);
   let hoveredPoint = $state(null);
 
+  // Directly derive entries from metadataStore.calendarIndex for live reactivity
+  let entries = $derived.by(() => {
+    const prefix = `${currentLangCode}:`;
+    const cal = metadataStore.calendarIndex || {};
+    const list = [];
+
+    for (const key in cal) {
+      if (key.startsWith(prefix)) {
+        const item = cal[key];
+        const dateStr = item.date || item.log_date || key.slice(prefix.length);
+        if (dateStr && dateStr.length >= 10) {
+          list.push({
+            ...item,
+            date: dateStr,
+            word: Number(item.word || 0),
+            ci: Number(item.ci || 0),
+            grammar: Number(item.grammar || 0),
+            listening: Number(item.listening || 0),
+            listening_time: Number(item.listening_time || 0),
+            speaking_time: Number(item.speaking_time || 0)
+          });
+        }
+      }
+    }
+
+    return list.sort((a, b) => b.date.localeCompare(a.date));
+  });
+
+  onMount(async () => {
+    await metadataStore.init(true);
+  });
+
   // 1. Core Aggregate Totals
   let aggregates = $derived.by(() => {
     let vocab = 0, grammar = 0, ci = 0, listeningSec = 0, speakingSec = 0;
     const len = entries.length;
+
     for (let i = 0; i < len; i++) {
       const e = entries[i];
-      vocab += e.word || 0;
-      grammar += e.grammar || 0;
-      ci += e.ci || 0;
-      listeningSec += e.listening_time || 0;
-      speakingSec += e.speaking_time || 0;
+      vocab += e.word;
+      grammar += e.grammar;
+      ci += e.ci;
+      listeningSec += e.listening_time;
+      speakingSec += e.speaking_time;
     }
+
     return {
       streak: currentLang.current_streak || 0,
-      vocab, grammar, ci, listeningSec, speakingSec
+      vocab, 
+      grammar, 
+      ci, 
+      listeningSec, 
+      speakingSec
     };
   });
 
@@ -83,6 +123,7 @@
   let milestoneStats = $derived.by(() => {
     const vocabDailies = [], listenDailies = [], speakDailies = [];
     const len = entries.length;
+
     for (let i = 0; i < len; i++) {
       const e = entries[i];
       if (e.word > 0) vocabDailies.push(e.word);
@@ -94,6 +135,10 @@
     const speakTargetSec = (milestones.speaking_hours || 12) * 3600;
     const vocabTarget = milestones.vocab_total || 1000;
 
+    const vocabPace = calculateMedian(vocabDailies) || 1;
+    const listenPace = calculateMedian(listenDailies) || 60;
+    const speakPace = calculateMedian(speakDailies) || 30;
+
     return [
       {
         id: 'vocab',
@@ -102,7 +147,7 @@
         color: colors.vocab?.dark_primary || colors.vocab?.primary || '#10b981',
         pct: Math.min(100, Math.round((aggregates.vocab / vocabTarget) * 100)),
         formattedTarget: vocabTarget.toLocaleString() + ' words',
-        eta: calculateETA(aggregates.vocab, vocabTarget, calculateMedian(vocabDailies), false)
+        eta: calculateETA(aggregates.vocab, vocabTarget, vocabPace, false)
       },
       {
         id: 'listening',
@@ -111,7 +156,7 @@
         color: colors.listening?.dark_primary || colors.listening?.primary || '#f97316',
         pct: Math.min(100, Math.round((aggregates.listeningSec / listTargetSec) * 100)),
         formattedTarget: `${milestones.listening_hours || 48}h logged`,
-        eta: calculateETA(aggregates.listeningSec, listTargetSec, calculateMedian(listenDailies), true)
+        eta: calculateETA(aggregates.listeningSec, listTargetSec, listenPace, true)
       },
       {
         id: 'speaking',
@@ -120,12 +165,12 @@
         color: colors.speaking?.dark_primary || colors.speaking?.primary || '#a855f7',
         pct: Math.min(100, Math.round((aggregates.speakingSec / speakTargetSec) * 100)),
         formattedTarget: `${milestones.speaking_hours || 12}h logged`,
-        eta: calculateETA(aggregates.speakingSec, speakTargetSec, calculateMedian(speakDailies), true)
+        eta: calculateETA(aggregates.speakingSec, speakTargetSec, speakPace, true)
       }
     ];
   });
 
-  // 4. D3 Math Engine (Zero-Copy Iteration)
+  // 4. D3 Math Engine
   const WIDTH = 480;
   const HEIGHT = 180;
   const MARGIN = { top: 24, right: 16, bottom: 28, left: 16 };
@@ -135,41 +180,47 @@
     if (len === 0) return null;
 
     let running = 0;
-    const data = new Array(len);
+    const data = [];
 
-    // entries is sorted descending (newest -> oldest). 
-    // Loop backwards to build ascending order without allocating a `.reverse()` array.
-    let writeIdx = 0;
+    // Oldest to newest
     for (let i = len - 1; i >= 0; i--) {
       const e = entries[i];
+      if (!e.date || e.date.length < 10) continue;
+
       if (activeChartTab === 'vocab') {
-        running += e.word || 0;
+        running += e.word;
       } else if (activeChartTab === 'listening') {
-        running += (e.listening_time || 0) / 3600;
+        running += e.listening_time / 3600;
       } else {
-        running += (e.speaking_time || 0) / 3600;
+        running += e.speaking_time / 3600;
       }
 
-      // Fast UTC timestamp parsing
       const y = +e.date.slice(0, 4);
       const m = +e.date.slice(5, 7) - 1;
       const d = +e.date.slice(8, 10);
 
-      data[writeIdx++] = {
+      data.push({
         dateStr: e.date,
         date: new Date(Date.UTC(y, m, d)),
         value: running
-      };
+      });
     }
 
-    const peak = data[len - 1]?.value || 1;
+    if (data.length === 0) return null;
+
+    const peak = data[data.length - 1]?.value || 0;
     const maxVal = Math.max(
       activeChartTab === 'vocab' ? 10 : 1, 
-      Math.ceil(peak * 1.15)
+      Math.ceil((peak || 1) * 1.15)
     );
 
+    const startDate = data[0].date;
+    const endDate = data.length === 1 
+      ? new Date(startDate.getTime() + 86400000) 
+      : data[data.length - 1].date;
+
     const xScale = scaleTime()
-      .domain([data[0].date, data[len - 1].date])
+      .domain([startDate, endDate])
       .range([MARGIN.left, WIDTH - MARGIN.right]);
 
     const yScale = scaleLinear()
@@ -200,12 +251,11 @@
       maxVal: activeChartTab === 'vocab' ? Math.round(maxVal) : maxVal.toFixed(1),
       midVal: activeChartTab === 'vocab' ? Math.round(maxVal / 2) : (maxVal / 2).toFixed(1),
       startDate: data[0]?.dateStr.slice(5),
-      endDate: data[len - 1]?.dateStr.slice(5),
-      currentTotal: data[len - 1]?.value || 0
+      endDate: data[data.length - 1]?.dateStr.slice(5),
+      currentTotal: data[data.length - 1]?.value || 0
     };
   });
 
-  // Fast cursor tracking lookup
   function handlePointerMove(e) {
     if (!chartModel?.points?.length) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -228,7 +278,6 @@
     hoveredPoint = closest;
   }
 
-  // 5. Heatmap Matrix ($O(1)$ Direct Calendar Index Lookup)
   function formatTileTime(sec) {
     if (!sec || sec <= 0) return '0s';
     if (sec < 60) return `${sec}s`;
@@ -242,8 +291,11 @@
     const vocabGoal = goals.vocab || 20;
     const listenGoalSec = (goals.listening_minutes || goals.listening || 45) * 60;
     const speakGoalSec = (goals.speaking_minutes || goals.speaking || 10) * 60;
-    const langCode = activeLanguage.code || 'zh-CN';
-    const calIndex = metadataStore.calendarIndex;
+    
+    const entryMap = new Map();
+    for (const item of entries) {
+      entryMap.set(item.date, item);
+    }
 
     function calculateTier(value, target) {
       if (!value || value <= 0) return 0;
@@ -268,12 +320,11 @@
         const dtDay = cur.getDate();
         const dt = `${y}-${m < 10 ? '0' + m : m}-${dtDay < 10 ? '0' + dtDay : dtDay}`;
 
-        // Direct O(1) hash lookup from store
-        const log = calIndex[`${langCode}:${dt}`];
+        const log = entryMap.get(dt);
 
-        const wCount = log?.word || 0;
-        const lSec = log?.listening_time || 0;
-        const sSec = log?.speaking_time || 0;
+        const wCount = Number(log?.word ?? 0);
+        const lSec = Number(log?.listening_time ?? 0);
+        const sSec = Number(log?.speaking_time ?? 0);
 
         let level = 0;
         let label = 'No activity logged';
@@ -416,7 +467,7 @@
               class="text-[9px] sm:text-[10px] font-mono font-black px-2 py-0.5 rounded-full border shadow-xs" 
               style="color: {m.color}; background-color: {m.color}15; border-color: {m.color}40; box-shadow: 0 0 10px {m.color}25;"
             >
-              {m.eta.badge}
+              {m.eta?.badge || 'Track'}
             </span>
             <span class="font-mono font-bold text-xs text-[var(--text-primary)]">
               {m.pct}%
@@ -437,7 +488,7 @@
         </div>
 
         <div class="flex items-center justify-between text-[10px] sm:text-[11px] font-mono text-[var(--text-muted)] pt-0.5 relative z-10 flex-wrap gap-1">
-          <span>Pace: <strong class="text-[var(--text-secondary)]">{m.eta.pace}</strong> • Est: {m.eta.est}</span>
+          <span>Pace: <strong class="text-[var(--text-secondary)]">{m.eta?.pace || '0/d'}</strong> &bull; Est: {m.eta?.est || 'Calculated soon'}</span>
           <span class="font-bold text-[var(--text-secondary)]">Goal: {m.formattedTarget}</span>
         </div>
 
@@ -445,7 +496,7 @@
     {/each}
   </div>
 
-  <!-- SECTION 1: CUMULATIVE TRAJECTORY (ZERO-GPU AMBIENT GLASS) -->
+  <!-- SECTION 1: CUMULATIVE TRAJECTORY -->
   <div 
     class="relative p-4 sm:p-6 rounded-3xl border border-[var(--border-card)] shadow-md space-y-4 transition-colors duration-200"
     style="
@@ -472,7 +523,7 @@
         </div>
       </div>
 
-      <!-- 🌟 VISIONOS LIQUID GLASS TAB TRENCH 🌟 -->
+      <!-- VisionOS Glass Tab Trench -->
       <div class="flex items-center p-0.5 sm:p-1 rounded-2xl bg-white/50 dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] backdrop-blur-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.03)] gap-1">
         <button
           type="button"
@@ -621,7 +672,7 @@
     </div>
   </div>
 
-  <!-- SECTION 2: 90-DAY ACTIVITY GRID (TOUCH-SCROLL OPTIMIZED) -->
+  <!-- SECTION 2: 90-DAY ACTIVITY GRID -->
   <div 
     class="relative p-4 sm:p-6 rounded-3xl border border-[var(--border-card)] shadow-md space-y-4 transition-colors duration-200"
     style="
@@ -648,7 +699,7 @@
         </div>
       </div>
 
-      <!-- 🌟 VISIONOS LIQUID GLASS TAB TRENCH 🌟 -->
+      <!-- VisionOS Glass Tab Trench -->
       <div class="flex items-center p-0.5 sm:p-1 rounded-2xl bg-white/50 dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] backdrop-blur-xl shadow-[inset_0_1px_2px_rgba(0,0,0,0.03)] gap-1">
         <button
           type="button"
@@ -702,7 +753,7 @@
       {/if}
     </div>
 
-    <!-- Heatmap Grid (Smooth touch scrolling on iPad) -->
+    <!-- Heatmap Grid -->
     <div class="w-full overflow-x-auto pb-1 relative z-10 overscroll-x-contain" style="-webkit-overflow-scrolling: touch;">
       <div class="inline-flex gap-2 items-center min-w-full justify-between sm:justify-start">
         <!-- Weekday Labels -->
@@ -722,7 +773,6 @@
             <div class="flex flex-col gap-1">
               {#each week as day}
                 {@const isSelected = inspectedDay?.date === day.date}
-                {@const isLit = day.level > 0}
                 <button
                   type="button"
                   onclick={() => (inspectedDay = day)}
@@ -730,7 +780,7 @@
                   style="
                     background-color: {getHeatmapBg(day.level, heatmapColor)}; 
                     border-color: {day.level === 0 ? 'var(--border-subtle)' : 'transparent'};
-                    box-shadow: {isLit ? `0 0 ${day.level * 3}px ${heatmapColor}${day.level * 24}` : 'none'};
+                    box-shadow: {day.level > 0 ? `0 0 ${day.level * 3}px color-mix(in srgb, ${heatmapColor} ${day.level * 25}%, transparent)` : 'none'};
                   "
                   aria-label="{day.date}: {day.label}"
                 ></button>

@@ -1,6 +1,7 @@
 <!-- frontend/src/App.svelte -->
 <script>
   import { onMount, tick } from 'svelte';
+  import { syncCoordinator } from './lib/syncCoordinator.js';
   import { metadataStore } from './lib/stores/metadata.svelte.js';
   import { notificationService } from './lib/services/notificationService.js';
   import { srsStore } from './lib/stores/srs.svelte.js';
@@ -190,6 +191,7 @@
   onMount(() => {
     metadataStore.init();
     handleDeepLink();
+    syncCoordinator.init();
 
     (async () => {
       await notificationService.init();

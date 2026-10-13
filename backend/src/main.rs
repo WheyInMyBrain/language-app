@@ -1,4 +1,3 @@
-// backend/src/main.rs
 mod backup;
 mod db;
 mod handlers;
@@ -20,19 +19,20 @@ use std::{
     time::Duration as StdDuration,
 };
 use tokio::fs;
+use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use handlers::{audio, glyph, ws};
+use handlers::{audio, glyph, sync};
 use state::AppState;
 
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
 
-    // 1. Initialize structured logging
+    // 1. Structured logging initialization
     tracing_subscriber::registry()
         .with(
             EnvFilter::try_from_default_env()
@@ -41,7 +41,7 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer().compact())
         .init();
 
-    // 2. Storage setup
+    // 2. Storage directories setup
     let storage_dir = env::var("STORAGE_DIR").unwrap_or_else(|_| "./storage".to_string());
     let storage_root = PathBuf::from(storage_dir);
 
@@ -65,20 +65,21 @@ async fn main() {
 
     let live_db_path = db_dir.join("language_database.db");
     let conn = db::init_db(&live_db_path);
+    let (sync_tx, _) = broadcast::channel::<String>(128);
 
-    // 🌟 AppState with lazy, dynamic lexicon connection pool 🌟
+    // 🌟 Clean AppState without Yjs runtime dependencies 🌟
     let state = Arc::new(AppState {
         audio_root: audio_root.clone(),
         db_path: live_db_path.clone(),
-        rooms: tokio::sync::RwLock::new(HashMap::new()),
         db_conn: Mutex::new(conn),
         lexicon_conns: Mutex::new(HashMap::new()),
+        sync_tx,
     });
 
     // 3. Background Notification Scheduler
     notifications::scheduler::start_notification_worker(state.clone());
 
-    // 4. Background Nightly Backup Scheduler (03:00 AM Local Time)
+    // 4. Nightly Backup Worker (03:00 AM Local Time)
     let live_db_for_cron = live_db_path.clone();
     let backups_dir_for_cron = backups_dir.clone();
 
@@ -125,7 +126,7 @@ async fn main() {
         }
     });
 
-    // 5. Manual Backup Handler
+    // 5. Manual Backup Endpoint Closure
     let live_db_for_api = live_db_path.clone();
     let backups_dir_for_api = backups_dir.clone();
 
@@ -165,18 +166,22 @@ async fn main() {
         }
     };
 
-    // 6. CORS Layer
+    // 6. CORS Policy
     let cors = CorsLayer::new()
         .allow_origin(tower_http::cors::Any)
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers(tower_http::cors::Any);
 
-    // 7. Router Setup
+    // 7. Axum HTTP Router
     let app = Router::new()
         .route("/ping", get(audio::handle_ping))
         .route("/api/ping", get(audio::handle_ping))
         .route("/api/backup/now", post(move || trigger_backup()))
-        .route("/ws", get(ws::handle_ws_upgrade))
+        // 🌟 LWW Sync Endpoints 🌟
+        .route("/api/sync/pull", get(sync::handle_pull))
+        .route("/api/sync/push", post(sync::handle_push))
+        .route("/api/sync/events", get(sync::handle_sse_stream))
+        // Push Notifications
         .route(
             "/api/notifications/vapid-key",
             get(notifications::get_vapid_public_key),
@@ -189,6 +194,7 @@ async fn main() {
             "/api/notifications/dispatch",
             post(notifications::handle_dispatch),
         )
+        // Audio Storage & Ingestion
         .route(
             "/api/audio/{lang}/{date}/{category}/{index}",
             post(audio::handle_audio_upload),
@@ -198,7 +204,7 @@ async fn main() {
         .layer(cors)
         .with_state(state);
 
-    // 8. Bind & Serve
+    // 8. Bind & Serve Listener
     let port = env::var("PORT").unwrap_or_else(|_| "3000".to_string());
     let bind_addr = format!("0.0.0.0:{}", port);
 

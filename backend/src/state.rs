@@ -1,4 +1,3 @@
-use axum::body::Bytes;
 use rusqlite::Connection;
 use serde::Serialize;
 use std::{
@@ -6,20 +5,15 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tokio::sync::{broadcast, RwLock};
-use yrs::Doc;
-
-pub struct Room {
-    pub doc: Arc<RwLock<Doc>>,
-    pub bcast: broadcast::Sender<(u64, Bytes)>,
-}
+use tokio::sync::broadcast;
 
 pub struct AppState {
     pub audio_root: PathBuf,
     pub db_path: PathBuf,
-    pub rooms: RwLock<HashMap<String, Arc<Room>>>,
     pub db_conn: Mutex<Connection>,
     pub lexicon_conns: Mutex<HashMap<String, Arc<Mutex<Connection>>>>,
+    // Channel broadcasting invalidation notifications (e.g. language code)
+    pub sync_tx: broadcast::Sender<String>,
 }
 
 #[derive(Serialize)]
@@ -38,7 +32,6 @@ pub struct UploadResponse {
 }
 
 impl AppState {
-    /// Retrieves or lazily opens a read-only SQLite database for any language code
     pub fn get_lexicon_conn(&self, lang: &str) -> Option<Arc<Mutex<Connection>>> {
         let mut conns = self.lexicon_conns.lock().unwrap();
 
@@ -46,7 +39,6 @@ impl AppState {
             return Some(conn.clone());
         }
 
-        // Resolves storage/database/lexicons/{lang}.db relative to db_path
         let lexicons_dir = self.db_path.parent()?.join("lexicons");
         let target_db_path = lexicons_dir.join(format!("{}.db", lang));
 

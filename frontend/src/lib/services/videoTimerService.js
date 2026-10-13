@@ -53,7 +53,6 @@ export class VideoTimerService {
 
   /**
    * Creates a normalized activity payload with ALL expected duration keys.
-   * Fixes the durationSec vs link_duration bug across Yjs and stores.
    */
   static createActivityPayload({ link, durationInput, extra = {} }) {
     const cleanUrl = canonicalizeVideoUrl(link);

@@ -1,48 +1,41 @@
-// frontend/src/lib/stores/vocabIndex.svelte.js
-import { createSyncedDoc } from '../yjs.js';
+import { initLocalDatabase } from '../db.js';
 import { stripDiacritics } from '../formatters/phonetics.js';
 import { buildVocabMemory, predictFromMemory } from '../services/vocabMemory.js';
 
 class VocabIndexStore {
   entries = $state([]);
   isLoaded = $state(false);
-  activeRoom = $state(null);
-  #docHandle = null;
+  #currentLang = null;
 
   // Reactively updates whenever entries changes
   #memoryMaps = $derived(buildVocabMemory(this.entries));
 
-  connect(langCode) {
-    const roomName = `${langCode}:vocab_index`;
-    if (this.activeRoom === roomName) return;
+  async connect(langCode) {
+    if (!langCode) return;
+    if (this.#currentLang === langCode && this.isLoaded) return;
 
-    if (this.#docHandle) {
-      this.#docHandle.destroy();
-      this.entries = [];
-      this.isLoaded = false;
-    }
+    this.#currentLang = langCode;
+    this.isLoaded = false;
+    await this.refresh();
+  }
 
-    this.activeRoom = roomName;
-    this.#docHandle = createSyncedDoc(roomName);
+  async refresh() {
+    if (!this.#currentLang) return;
+    const db = await initLocalDatabase();
 
-    const { doc, idbProvider } = this.#docHandle;
-    const entriesArray = doc.getArray('entries');
+    const tx = db.transaction('words', 'readonly');
+    const allWords = await tx.store.getAll();
+    await tx.done;
 
-    const sync = () => {
-      const raw = entriesArray.toArray().flat();
-      this.entries = raw.map((item) => ({
+    this.entries = allWords
+      .filter((w) => w.lang_code === this.#currentLang && !w.deleted_at)
+      .map((item) => ({
         ...item,
         _normPrimary: (item.native_script || '').toLowerCase(),
         _normSecondary: stripDiacritics(item.pronunciation || '')
       }));
-    };
 
-    idbProvider.on('synced', () => {
-      this.isLoaded = true;
-      sync();
-    });
-
-    entriesArray.observe(sync);
+    this.isLoaded = true;
   }
 
   predictPronunciation = (text) => {

@@ -68,7 +68,7 @@
       <Mascot {activeRoute} />
     </div>
 
-    <!-- RIGHT: Audio Queue, Streak, SRS Due, and Yjs Telemetry -->
+    <!-- RIGHT: Audio Queue, Streak, SRS Due, Telemetry -->
     <div class="flex items-center gap-2 sm:gap-2.5">
 
       <!-- Audio Outbox Sync Capsule -->
@@ -138,7 +138,7 @@
         </div>
       {/if}
 
-      <!-- Yjs Synchronizer Telemetry Capsule -->
+      <!-- Synchronizer Telemetry Capsule -->
       <div 
         title="Sync Pipeline: {status}"
         class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[var(--bg-surface)]/90 border border-[var(--border-card)] shadow-xs"

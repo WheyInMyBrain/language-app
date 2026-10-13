@@ -1,76 +1,163 @@
 // frontend/src/lib/stores/metadata.svelte.js
-import { createSyncedDoc, getDocHandle } from '../yjs.js';
+import { initLocalDatabase, stageLocalMutation } from '../db.js';
 
-const ROOM_METADATA = 'global:metadata';
 const MS_PER_DAY = 86400000;
 
+function triggerSyncFlush() {
+  if (typeof window === 'undefined') return;
+  import('../syncCoordinator.js')
+    .then((m) => {
+      if (m?.syncCoordinator?.scheduleFlush) {
+        m.syncCoordinator.scheduleFlush();
+      }
+    })
+    .catch(() => {});
+}
+
 class MetadataStore {
-  connectionStatus = $state('connecting'); // 'connecting' | 'connected' | 'disconnected'
+  connectionStatus = $state('connected');
   isLocalLoaded = $state(false);
   languages = $state({});
   calendarIndex = $state({});
   activeLanguage = $state('zh-CN');
 
-  #docHandle = null;
   #pendingStreakTimers = new Map();
 
-  // Cache for sorted calendar entries to avoid re-sorting on every read
   #cachedSortedEntries = null;
   #cacheVersion = 0;
   #lastConsumedVersion = -1;
   #lastConsumedLang = null;
 
-  init() {
-    if (this.#docHandle) return;
+  async init(forceReload = false) {
+    if (this.isLocalLoaded && !forceReload) return;
 
-    this.#docHandle = createSyncedDoc(ROOM_METADATA, (status) => {
-      this.connectionStatus = status;
-    });
+    const db = await initLocalDatabase();
 
-    const { doc, idbProvider } = this.#docHandle;
+    const [langsList, dailyLogsList, allWords, allActs] = await Promise.all([
+      db.getAll('languages').catch(() => []),
+      db.getAll('daily_logs').catch(() => []),
+      db.getAll('words').catch(() => []),
+      db.getAll('activities').catch(() => [])
+    ]);
 
-    const langsMap = doc.getMap('languages');
-    const calendarMap = doc.getMap('calendar_index');
+    const langs = {};
+    for (const l of langsList) {
+      if (!l.deleted_at) {
+        langs[l.code] = {
+          ...l,
+          // Deserialize JSON strings if raw from SQLite
+          goals: typeof l.goals_json === 'string' ? JSON.parse(l.goals_json || '{}') : (l.goals || {}),
+          milestones: typeof l.milestones_json === 'string' ? JSON.parse(l.milestones_json || '{}') : (l.milestones || {}),
+          momentum: typeof l.momentum_json === 'string' ? JSON.parse(l.momentum_json || '{}') : (l.momentum || {}),
+          colors: typeof l.colors_json === 'string' ? JSON.parse(l.colors_json || '{}') : (l.colors || {}),
+          tones: typeof l.tones_json === 'string' ? JSON.parse(l.tones_json || '{}') : (l.tones || {})
+        };
+      }
+    }
 
-    // 1. Optimized sync: shallow map iteration instead of expensive recursive toJSON()
-    const syncState = () => {
-      const nextLangs = {};
-      for (const [k, v] of langsMap.entries()) {
-        nextLangs[k] = v;
+    // 1. Direct Ground Truth Aggregation Map
+    const dayWordsMap = new Map();
+    const dayVocabAudioMap = new Map();
+
+    for (const w of allWords) {
+      if (w.deleted_at) continue;
+      const key = `${w.lang_code}:${w.log_date}`;
+      dayWordsMap.set(key, (dayWordsMap.get(key) || 0) + 1);
+
+      const aDur = Number(w.audio_duration || 0);
+      if (!isNaN(aDur) && aDur > 0) {
+        dayVocabAudioMap.set(key, (dayVocabAudioMap.get(key) || 0) + aDur);
+      }
+    }
+
+    const dayActsMap = new Map();
+    for (const a of allActs) {
+      if (a.deleted_at) continue;
+      const key = `${a.lang_code}:${a.log_date}`;
+      const cur = dayActsMap.get(key) || {
+        ciCount: 0,
+        grammarCount: 0,
+        listeningCount: 0,
+        ciLinkSec: 0,
+        pureListeningSec: 0,
+        actAudioSec: 0
+      };
+
+      const linkDur = Number(a.link_duration || a.durationSec || a.duration || 0);
+      const audioDur = Number(a.audio_duration || 0);
+
+      if (a.activity_type === 'ci') {
+        cur.ciCount++;
+        cur.ciLinkSec += linkDur;
+      } else if (a.activity_type === 'listening') {
+        cur.listeningCount++;
+        cur.pureListeningSec += linkDur;
+      } else if (a.activity_type === 'grammar') {
+        cur.grammarCount++;
       }
 
-      const nextCal = {};
-      for (const [k, v] of calendarMap.entries()) {
-        nextCal[k] = v;
+      if (!isNaN(audioDur) && audioDur > 0) {
+        cur.actAudioSec += audioDur;
       }
 
-      this.languages = nextLangs;
-      this.calendarIndex = nextCal;
-      this.#cacheVersion++;
+      dayActsMap.set(key, cur);
+    }
 
-      const keys = Object.keys(this.languages);
-      if (keys.length > 0 && !this.languages[this.activeLanguage]) {
-        this.activeLanguage = keys[0];
+    // 2. Hydrate calendarIndex
+    const cal = {};
+    for (const log of dailyLogsList) {
+      if (!log.deleted_at) {
+        const dateStr = log.log_date || log.date;
+        const key = `${log.lang_code}:${dateStr}`;
+        const actTotals = dayActsMap.get(key);
+        const derivedWords = dayWordsMap.get(key) || 0;
+        const derivedVocabAudio = dayVocabAudioMap.get(key) || 0;
+
+        const revision = Number(log.revision ?? 0);
+        const ciMultiplier = Math.max(1, Math.min(3, revision || 1));
+
+        const computedListeningSec = actTotals
+          ? actTotals.pureListeningSec + (ciMultiplier * actTotals.ciLinkSec)
+          : 0;
+
+        const computedSpeakingSec = (actTotals ? actTotals.actAudioSec : 0) + derivedVocabAudio;
+
+        const finalWord = Math.max(Number(log.word || 0), derivedWords);
+        const finalCi = Math.max(Number(log.ci || 0), actTotals?.ciCount || 0);
+        const finalGrammar = Math.max(Number(log.grammar || 0), actTotals?.grammarCount || 0);
+        const finalListening = Math.max(Number(log.listening || 0), actTotals?.listeningCount || 0);
+        const finalListeningSec = Math.max(Number(log.listening_time || 0), computedListeningSec);
+        const finalSpeakingSec = Math.max(Number(log.speaking_time || 0), computedSpeakingSec);
+
+        cal[key] = {
+          ...log,
+          date: dateStr,
+          word: finalWord,
+          ci: finalCi,
+          grammar: finalGrammar,
+          listening: finalListening,
+          speaking_time: finalSpeakingSec,
+          listening_time: finalListeningSec
+        };
       }
+    }
 
-      if (this.activeLanguage) {
-        this.queueStreakRecalc(this.activeLanguage);
-      }
-    };
+    this.languages = langs;
+    this.calendarIndex = cal;
+    this.#cachedSortedEntries = null;
+    this.#cacheVersion++;
+    this.isLocalLoaded = true;
 
-    idbProvider.on('synced', () => {
-      this.isLocalLoaded = true;
-      syncState();
-    });
+    const keys = Object.keys(this.languages);
+    if (keys.length > 0 && !this.languages[this.activeLanguage]) {
+      this.activeLanguage = keys[0];
+    }
 
-    langsMap.observe(syncState);
-    calendarMap.observe(syncState);
+    if (this.activeLanguage) {
+      this.queueStreakRecalc(this.activeLanguage);
+    }
   }
 
-  /**
-   * High-speed UTC date parser for "YYYY-MM-DD".
-   * 10x faster than .split('-').map(Number) and allocates zero temporary arrays.
-   */
   #parseUtcDay(dateStr) {
     if (!dateStr || typeof dateStr !== 'string' || dateStr.length < 10) return NaN;
     const y = +dateStr.slice(0, 4);
@@ -79,9 +166,6 @@ class MetadataStore {
     return Date.UTC(y, m, d);
   }
 
-  /**
-   * Fast zero-allocation local date formatter: YYYY-MM-DD
-   */
   #toLocalDateStr(dateObj) {
     const y = dateObj.getFullYear();
     const m = dateObj.getMonth() + 1;
@@ -89,31 +173,24 @@ class MetadataStore {
     return `${y}-${m < 10 ? '0' + m : m}-${d < 10 ? '0' + d : d}`;
   }
 
-  /**
-   * Determines if a calendar entry qualifies as an active study day
-   */
   #isEntryActive(entry) {
     if (!entry) return false;
-    if ((entry.word || 0) > 0) return true;
-    if ((entry.ci || 0) > 0) return true;
-    if ((entry.grammar || 0) > 0) return true;
-    if ((entry.speaking_time || 0) > 0) return true;
-    if ((entry.listening_time || 0) > 0) return true;
+    if ((Number(entry.word) || Number(entry.vocab_done) || 0) > 0) return true;
+    if ((Number(entry.ci) || Number(entry.ci_done) || 0) > 0) return true;
+    if ((Number(entry.grammar) || Number(entry.grammar_done) || 0) > 0) return true;
+    if ((Number(entry.speaking_time) || 0) > 0) return true;
+    if ((Number(entry.listening_time) || 0) > 0) return true;
 
     const r = entry.reviews_completed;
     if (r) {
-      if ((r.srs_vision || 0) > 0) return true;
-      if ((r.srs_listen || 0) > 0) return true;
-      if ((r.srs_write || 0) > 0) return true;
-      if ((r.day_revisions || 0) > 0) return true;
+      if ((Number(r.srs_vision) || Number(entry.srs_vision_done) || 0) > 0) return true;
+      if ((Number(r.srs_listen) || Number(entry.srs_listen_done) || 0) > 0) return true;
+      if ((Number(r.srs_write) || Number(entry.srs_write_done) || 0) > 0) return true;
+      if ((Number(r.day_revisions) || Number(entry.revisions_done) || 0) > 0) return true;
     }
     return false;
   }
 
-  /**
-   * Microtask debounce: prevents O(N) recalculations from running multiple times
-   * during rapid edits, batch logging, or fast SRS review dispatch.
-   */
   queueStreakRecalc(langCode) {
     if (!langCode) return;
     if (this.#pendingStreakTimers.has(langCode)) return;
@@ -125,35 +202,29 @@ class MetadataStore {
     this.#pendingStreakTimers.set(langCode, timer);
   }
 
-  /**
-   * Recalculates current_streak, longest_streak, and total_days for a language.
-   */
-  recalculateStreaks(langCode) {
-    if (!this.#docHandle?.doc || !langCode) return;
+  async recalculateStreaks(langCode) {
+    if (!langCode) return;
 
     const prefix = `${langCode}:`;
     const prefixLen = prefix.length;
     const activeDatesSet = new Set();
 
-    // Fast map scan
     for (const key in this.calendarIndex) {
       if (key.startsWith(prefix)) {
         const entry = this.calendarIndex[key];
         if (this.#isEntryActive(entry)) {
-          activeDatesSet.add(entry.date || key.slice(prefixLen));
+          activeDatesSet.add(entry.date || entry.log_date || key.slice(prefixLen));
         }
       }
     }
 
     const totalDays = activeDatesSet.size;
     if (totalDays === 0) {
-      this.#commitStreakUpdate(langCode, 0, 0, 0);
+      await this.#commitStreakUpdate(langCode, 0, 0, 0);
       return;
     }
 
-    // Sort descending: newest to oldest
     const sortedDates = Array.from(activeDatesSet).sort((a, b) => b.localeCompare(a));
-
     const now = new Date();
     const todayStr = this.#toLocalDateStr(now);
     now.setDate(now.getDate() - 1);
@@ -161,7 +232,6 @@ class MetadataStore {
 
     const latestActiveDate = sortedDates[0];
 
-    // 1. Current streak calculation
     let currentStreak = 0;
     if (latestActiveDate === todayStr || latestActiveDate === yesterdayStr) {
       currentStreak = 1;
@@ -175,14 +245,13 @@ class MetadataStore {
           currentStreak++;
           prevUtc = curUtc;
         } else if (dayDiff === 0) {
-          continue; // Duplicate guard
+          continue;
         } else {
           break;
         }
       }
     }
 
-    // 2. Longest historical streak calculation
     let longestStreak = 1;
     let streakRun = 1;
     let prevUtc = this.#parseUtcDay(sortedDates[0]);
@@ -206,19 +275,18 @@ class MetadataStore {
     const existing = this.languages[langCode] || {};
     const finalLongest = Math.max(existing.longest_streak || 0, longestStreak, currentStreak);
 
-    this.#commitStreakUpdate(langCode, currentStreak, finalLongest, totalDays);
+    await this.#commitStreakUpdate(langCode, currentStreak, finalLongest, totalDays);
   }
 
-  #commitStreakUpdate(langCode, currentStreak, longestStreak, totalDays) {
-    const langsMap = this.#docHandle.doc.getMap('languages');
-    const existing = langsMap.get(langCode) || {};
+  async #commitStreakUpdate(langCode, currentStreak, longestStreak, totalDays) {
+    const existing = this.languages[langCode] || { code: langCode, name: langCode };
 
     if (
       existing.current_streak === currentStreak &&
       existing.longest_streak === longestStreak &&
       existing.total_days === totalDays
     ) {
-      return; // No-op if values match
+      return;
     }
 
     const updated = {
@@ -228,22 +296,26 @@ class MetadataStore {
       total_days: totalDays
     };
 
-    this.#docHandle.doc.transact(() => {
-      langsMap.set(langCode, updated);
-    });
-
-    this.languages[langCode] = updated;
+    this.languages = {
+      ...this.languages,
+      [langCode]: updated
+    };
+    await stageLocalMutation('languages', langCode, updated);
+    triggerSyncFlush();
   }
 
-  /**
-   * Atomically records a completed review into calendar_index.
-   */
-  recordReview(langCode, date, type, subType = 'visual') {
-    if (!this.#docHandle?.doc || !langCode || !date) return;
+  async recordReview(langCode, date, type, subType = 'visual') {
+    if (!langCode || !date) return;
 
-    const calendarMap = this.#docHandle.doc.getMap('calendar_index');
+    const db = await initLocalDatabase();
     const key = `${langCode}:${date}`;
-    const existing = calendarMap.get(key) || { date };
+
+    const existing = this.calendarIndex[key] || (await db.get('daily_logs', key)) || {
+      id: key,
+      lang_code: langCode,
+      log_date: date,
+      date
+    };
 
     const reviews = existing.reviews_completed ? { ...existing.reviews_completed } : {
       srs_vision: 0,
@@ -266,44 +338,45 @@ class MetadataStore {
 
     const updated = {
       ...existing,
-      reviews_completed: reviews
+      id: key,
+      lang_code: langCode,
+      log_date: date,
+      date,
+      reviews_completed: reviews,
+      srs_vision_done: reviews.srs_vision,
+      srs_listen_done: reviews.srs_listen,
+      srs_write_done: reviews.srs_write,
+      revisions_done: reviews.day_revisions
     };
 
-    this.#docHandle.doc.transact(() => {
-      calendarMap.set(key, updated);
-    });
-
-    // In-place mutate without full object reallocation
-    this.calendarIndex[key] = updated;
+    this.calendarIndex = {
+      ...this.calendarIndex,
+      [key]: updated
+    };
+    this.#cachedSortedEntries = null;
     this.#cacheVersion++;
 
+    await stageLocalMutation('daily_logs', key, updated);
+    triggerSyncFlush();
     this.queueStreakRecalc(langCode);
   }
 
-  /**
-   * Recalculates and updates calendar_index for a specific day.
-   */
-  refreshDayTotals(langCode, date) {
-    if (!this.#docHandle?.doc) return;
+  async refreshDayTotals(langCode, date) {
+    const db = await initLocalDatabase();
 
-    const roomName = `${langCode}:${date}`;
-    const dayHandle = getDocHandle(roomName) || createSyncedDoc(roomName);
-    if (!dayHandle?.doc) return;
+    const [rawWords, rawActs] = await Promise.all([
+      db.getAll('words').catch(() => []),
+      db.getAll('activities').catch(() => [])
+    ]);
 
-    const dayDoc = dayHandle.doc;
-    const metaMap = dayDoc.getMap('meta');
-    const session = metaMap.get('session') || {};
-    const revision = Number(session.revision ?? 0);
-
-    // Fast array extraction
-    const rawWords = dayDoc.getArray('words').toArray();
-    const rawActivities = dayDoc.getArray('activities').toArray();
+    const allWords = rawWords.filter((w) => w.lang_code === langCode && w.log_date === date && !w.deleted_at);
+    const allActs = rawActs.filter((a) => a.lang_code === langCode && a.log_date === date && !a.deleted_at);
 
     let vocabAudioSec = 0;
     const unvoiced_words_indices = [];
 
-    for (let i = 0; i < rawWords.length; i++) {
-      const w = typeof rawWords[i].toJSON === 'function' ? rawWords[i].toJSON() : rawWords[i];
+    for (let i = 0; i < allWords.length; i++) {
+      const w = allWords[i];
       const dur = Number(w.audio_duration);
       if (!isNaN(dur) && dur > 0) {
         vocabAudioSec += dur;
@@ -323,14 +396,14 @@ class MetadataStore {
     const unvoiced_listening_indices = [];
     const unvoiced_grammar_indices = [];
 
-    for (let i = 0; i < rawActivities.length; i++) {
-      const act = typeof rawActivities[i].toJSON === 'function' ? rawActivities[i].toJSON() : rawActivities[i];
+    for (let i = 0; i < allActs.length; i++) {
+      const act = allActs[i];
       const type = act.activity_type;
-      const linkDur = Number(act.link_duration || act.durationSec) || 0;
-      const audioDur = Number(act.audio_duration) || 0;
 
-      const hasAudio = !isNaN(audioDur) && audioDur > 0;
-      if (hasAudio) {
+      const linkDur = Number(act.link_duration || act.durationSec || act.duration || 0);
+      const audioDur = Number(act.audio_duration || 0);
+
+      if (!isNaN(audioDur) && audioDur > 0) {
         actAudioSec += audioDur;
       }
 
@@ -339,22 +412,26 @@ class MetadataStore {
       if (type === 'ci') {
         ciCount++;
         ciLinkSec += linkDur;
-        if (!hasAudio) unvoiced_ci_indices.push(itemIdx);
+        if (!audioDur) unvoiced_ci_indices.push(itemIdx);
       } else if (type === 'listening') {
         listeningCount++;
         pureListeningSec += linkDur;
-        if (!hasAudio) unvoiced_listening_indices.push(itemIdx);
+        if (!audioDur) unvoiced_listening_indices.push(itemIdx);
       } else if (type === 'grammar') {
         grammarCount++;
-        if (!hasAudio) unvoiced_grammar_indices.push(itemIdx);
+        if (!audioDur) unvoiced_grammar_indices.push(itemIdx);
       }
     }
 
+    const key = `${langCode}:${date}`;
+    const rawExisting = this.calendarIndex[key] || (await db.get('daily_logs', key)) || {};
+    const revision = Number(rawExisting.revision ?? 0);
+
     const totalSpeakingSec = vocabAudioSec + actAudioSec;
-    const ciMultiplier = Math.min(3, revision);
+
+    const ciMultiplier = Math.max(1, Math.min(3, revision || 1));
     const totalListeningSec = pureListeningSec + (ciMultiplier * ciLinkSec);
 
-    // Goal completion evaluation
     const langConfig = this.languages?.[langCode] || {};
     const momentum = langConfig.momentum || {};
     const goals = langConfig.goals || {};
@@ -368,35 +445,34 @@ class MetadataStore {
     const listeningMinutes = Math.round(totalListeningSec / 60);
     const speakingMinutes = Math.round(totalSpeakingSec / 60);
 
-    const calendarMap = this.#docHandle.doc.getMap('calendar_index');
-    const key = `${langCode}:${date}`;
-    const existing = calendarMap.get(key) || { date };
-
-    const reviews_completed = existing.reviews_completed || {
-      srs_vision: 0,
-      srs_listen: 0,
-      srs_write: 0,
-      day_revisions: 0
+    const existingReviews = rawExisting.reviews_completed || {};
+    const reviews_completed = {
+      srs_vision: Number(existingReviews.srs_vision || 0),
+      srs_listen: Number(existingReviews.srs_listen || 0),
+      srs_write: Number(existingReviews.srs_write || 0),
+      day_revisions: Number(existingReviews.day_revisions || 0)
     };
 
     const updatedEntry = {
-      ...existing,
+      id: key,
+      lang_code: langCode,
+      log_date: date,
       date,
       revision,
-      due_date: session.due_date || existing.due_date || date,
+      due_date: rawExisting.due_date || date,
 
-      word: rawWords.length,
+      word: allWords.length,
       ci: ciCount,
       grammar: grammarCount,
       listening: listeningCount,
       speaking_time: totalSpeakingSec,
       listening_time: totalListeningSec,
 
-      vocab_done: rawWords.length >= vocabBaseline,
-      ci_done: ciCount >= ciBaseline,
-      listening_done: listeningMinutes >= listeningBaseline,
-      speaking_done: speakingMinutes >= speakingBaseline,
-      grammar_done: grammarCount >= grammarBaseline,
+      vocab_done: allWords.length >= vocabBaseline ? 1 : 0,
+      ci_done: ciCount >= ciBaseline ? 1 : 0,
+      listening_done: listeningMinutes >= listeningBaseline ? 1 : 0,
+      speaking_done: speakingMinutes >= speakingBaseline ? 1 : 0,
+      grammar_done: grammarCount >= grammarBaseline ? 1 : 0,
 
       unvoiced_words_indices,
       unvoiced_ci_indices,
@@ -406,13 +482,15 @@ class MetadataStore {
       reviews_completed
     };
 
-    this.#docHandle.doc.transact(() => {
-      calendarMap.set(key, updatedEntry);
-    });
-
-    this.calendarIndex[key] = updatedEntry;
+    this.calendarIndex = {
+      ...this.calendarIndex,
+      [key]: updatedEntry
+    };
+    this.#cachedSortedEntries = null;
     this.#cacheVersion++;
 
+    await stageLocalMutation('daily_logs', key, updatedEntry);
+    triggerSyncFlush();
     this.queueStreakRecalc(langCode);
   }
 
@@ -422,14 +500,10 @@ class MetadataStore {
       code: 'zh-CN',
       current_streak: 0,
       longest_streak: 0,
-      total_days: 0,
+      total_days: 0
     };
   }
 
-  /**
-   * Memoized calendar entry retrieval.
-   * Only filters and re-sorts if the active language or index contents change.
-   */
   get sortedCalendarEntries() {
     if (
       this.#cachedSortedEntries &&
@@ -461,39 +535,56 @@ class MetadataStore {
     return res;
   }
 
-  addLanguage(languageConfig) {
-    if (!this.#docHandle?.doc) return;
-    const doc = this.#docHandle.doc;
-    const langsMap = doc.getMap('languages');
-
-    doc.transact(() => {
-      langsMap.set(languageConfig.code, languageConfig);
-    });
-
-    this.languages[languageConfig.code] = languageConfig;
+  async addLanguage(languageConfig) {
+    this.languages = {
+      ...this.languages,
+      [languageConfig.code]: languageConfig
+    };
+    await stageLocalMutation('languages', languageConfig.code, languageConfig);
+    triggerSyncFlush();
   }
 
-  updateLanguageConfig(code, partialConfig) {
-    if (!this.#docHandle?.doc) return;
-    const doc = this.#docHandle.doc;
-    const langsMap = doc.getMap('languages');
-    const existing = langsMap.get(code) || {};
+  /**
+   * Deeply merges configuration overrides, saves to IndexedDB outbox,
+   * and triggers an immediate sync push to the SQLite backend.
+   */
+  async updateLanguageConfig(code, partialConfig) {
+    const existing = this.languages[code] || {};
 
     const updated = {
       ...existing,
       ...partialConfig,
-      goals: { ...(existing.goals || {}), ...(partialConfig.goals || {}) },
-      milestones: { ...(existing.milestones || {}), ...(partialConfig.milestones || {}) },
-      momentum: { ...(existing.momentum || {}), ...(partialConfig.momentum || {}) },
-      colors: { ...(existing.colors || {}), ...(partialConfig.colors || {}) },
-      tones: { ...(existing.tones || {}), ...(partialConfig.tones || {}) }
+      code,
+      name: partialConfig.name || existing.name || code,
+      goals: {
+        ...(existing.goals || {}),
+        ...(partialConfig.goals || {})
+      },
+      milestones: {
+        ...(existing.milestones || {}),
+        ...(partialConfig.milestones || {})
+      },
+      momentum: {
+        ...(existing.momentum || {}),
+        ...(partialConfig.momentum || {})
+      },
+      colors: {
+        ...(existing.colors || {}),
+        ...(partialConfig.colors || {})
+      },
+      tones: {
+        ...(existing.tones || {}),
+        ...(partialConfig.tones || {})
+      }
     };
 
-    doc.transact(() => {
-      langsMap.set(code, updated);
-    });
+    this.languages = {
+      ...this.languages,
+      [code]: updated
+    };
 
-    this.languages[code] = updated;
+    await stageLocalMutation('languages', code, updated);
+    triggerSyncFlush();
   }
 }
 

@@ -1,3 +1,3 @@
 pub mod audio;
-pub mod ws;
+pub mod sync;
 pub mod glyph;

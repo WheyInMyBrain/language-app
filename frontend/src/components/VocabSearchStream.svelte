@@ -17,7 +17,7 @@
     Command
   } from '@lucide/svelte';
 
-  let { onSelectDate } = $props();
+  let { onSelectDate = null } = $props();
 
   let query = $state('');
   let searchInput = $state(null);
@@ -63,7 +63,7 @@
     glareY = 50;
   }
 
-  let filteredEntries = $derived(vocabIndexStore.search(query));
+  let filteredEntries = $derived(vocabIndexStore.search(query) || []);
   let langConfig = $derived(activeLanguage.current || {});
   let themeColor = $derived(activeLanguage.themeColor || '#a855f7');
   let isRTL = $derived(langConfig.dir === 'rtl' || (langConfig.code && langConfig.code.startsWith('ar')));
@@ -92,11 +92,16 @@
   );
 
   let visibleEntries = $derived.by(() => {
-    return filteredEntries.slice(startIndex, endIndex).map((item, idx) => ({
-      ...item,
-      virtualIndex: startIndex + idx,
-      offsetLeft: (startIndex + idx) * ITEM_STRIDE
-    }));
+    return filteredEntries.slice(startIndex, endIndex).map((item, idx) => {
+      // Robust date normalization: handles both .log_date and .date
+      const effectiveDate = item.date || item.log_date || '';
+      return {
+        ...item,
+        date: effectiveDate,
+        virtualIndex: startIndex + idx,
+        offsetLeft: (startIndex + idx) * ITEM_STRIDE
+      };
+    });
   });
 
   let canScrollLeft = $derived(scrollLeft > 10);
@@ -276,7 +281,7 @@
       >
         <div class="relative h-full" style="width: {totalWidth}px; min-width: 100%;">
           {#each visibleEntries as item, idx (item.id || item.word_id || `${item.native_script}_${item.date}_${idx}`)}
-            {@const key = item.word_id || item.native_script + item.date}
+            {@const key = item.id || item.word_id || (item.native_script + item.date)}
             {@const isHovered = activeCardKey === key}
             {@const tokens = getSynchronizedTokens(item.native_script, item.pronunciation, langConfig)}
             
@@ -287,7 +292,7 @@
               <!-- 🌟 3D GYROSCOPIC TILT CARD 🌟 -->
               <button
                 type="button"
-                onclick={() => onSelectDate(item.date)}
+                onclick={() => onSelectDate?.(item.date)}
                 onmousemove={(e) => handleCardMouseMove(e, key)}
                 onmouseleave={handleCardMouseLeave}
                 class="group/card w-full h-full flex flex-col items-center justify-between p-3 rounded-3xl border border-[var(--border-card)] bg-[var(--bg-surface)]/90 hover:bg-[var(--bg-surface-elevated)] active:scale-[0.96] text-center cursor-pointer outline-none relative backdrop-blur-md will-change-transform"
@@ -328,7 +333,7 @@
                 <div class="w-full flex items-center justify-between gap-1 pb-1 relative z-10" dir="ltr">
                   <span class="inline-flex items-center gap-1 font-mono text-[9px] font-bold text-[var(--text-muted)] group-hover/card:text-[var(--text-secondary)] transition-colors">
                     <Calendar size={10} />
-                    <span>{item.date.slice(5)}</span>
+                    <span>{item.date ? item.date.slice(5) : '--'}</span>
                   </span>
 
                   <span 

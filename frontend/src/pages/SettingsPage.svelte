@@ -1,7 +1,8 @@
 <!-- frontend/src/pages/SettingsPage.svelte -->
 <script>
-  import { untrack } from 'svelte';
+  import { untrack, onMount } from 'svelte';
   import { metadataStore } from '../lib/stores/metadata.svelte.js';
+  import { activeLanguage } from '../lib/stores/activeLanguage.svelte.js';
   import { notificationService } from '../lib/services/notificationService.js';
 
   // Razor-sharp icons
@@ -33,11 +34,8 @@
     Award
   } from '@lucide/svelte';
 
-  let currentLang = $derived(
-    metadataStore.languages && metadataStore.activeLanguage
-      ? metadataStore.languages[metadataStore.activeLanguage] || {}
-      : {}
-  );
+  // Svelte 5 reactive derivation pulling full composed language data (code, name, colors, tones, goals)
+  let currentLang = $derived(activeLanguage.current || {});
 
   let goals = $state({
     vocab: 10,
@@ -67,9 +65,7 @@
     revisions: { floor: 1, baseline: 1, ceiling: 2 }
   });
 
-  let colors = $state({
-    theme: { dark_primary: '#a855f7', light_primary: '#9333ea' }
-  });
+  let colors = $state({});
   let tones = $state({});
 
   // Auto-save sync status: 'idle' | 'saving' | 'saved'
@@ -101,12 +97,19 @@
   let isBackingUp = $state(false);
   let backupStatus = $state('');
 
-  // 1. Initial Load from Store into Local State
+  onMount(async () => {
+    // Guarantees static language defaults (all tones and category tracks) exist in SQLite and outbox
+    if (activeLanguage.ensureSynced) {
+      await activeLanguage.ensureSynced();
+    }
+  });
+
+  // 1. Initial Load & Reactive Ingestion from activeLanguage into Local State
   $effect(() => {
     const lang = currentLang;
 
     untrack(() => {
-      if (!lang) return;
+      if (!lang || !lang.code) return;
 
       if (lang.goals) {
         goals = {
@@ -126,7 +129,7 @@
         };
       }
 
-      // Ingest momentum config from language profile / Yjs
+      // Ingest momentum config from language profile
       const mom = lang.momentum || {};
       momentum = {
         listening: {
@@ -168,15 +171,9 @@
         }
       };
 
-      if (lang.colors) {
-        colors = JSON.parse(JSON.stringify(lang.colors));
-      }
-      if (!colors.theme) {
-        colors.theme = { dark_primary: '#a855f7', light_primary: '#9333ea' };
-      }
-      if (lang.tones) {
-        tones = JSON.parse(JSON.stringify(lang.tones));
-      }
+      // Pull composed color palette and tone tables
+      colors = JSON.parse(JSON.stringify(lang.colors || {}));
+      tones = JSON.parse(JSON.stringify(lang.tones || {}));
 
       setTimeout(() => {
         isInitialLoad = false;
@@ -184,9 +181,9 @@
     });
   });
 
-  // 2. Real-time Auto-Save Engine
+  // 2. Real-time Auto-Save Engine: pushes back through activeLanguage to persist in SQLite & outbox
   function triggerAutoSave(immediate = false) {
-    if (isInitialLoad || !metadataStore.activeLanguage) return;
+    if (isInitialLoad || !activeLanguage.code) return;
 
     syncState = 'saving';
     if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
@@ -194,17 +191,18 @@
     goals.listening_minutes = momentum.listening.baseline;
     goals.speaking_minutes = momentum.speaking.baseline;
 
-    const commitSave = () => {
+    const commitSave = async () => {
       if (momentum.vocab.ceiling > 10) momentum.vocab.ceiling = 10;
       if (momentum.vocab.baseline > 10) momentum.vocab.baseline = 10;
 
-      metadataStore.updateLanguageConfig(metadataStore.activeLanguage, {
+      await activeLanguage.updateConfig({
         goals: $state.snapshot(goals),
         milestones: $state.snapshot(milestones),
         momentum: $state.snapshot(momentum),
         colors: $state.snapshot(colors),
         tones: $state.snapshot(tones)
       });
+
       syncState = 'saved';
       setTimeout(() => {
         if (syncState === 'saved') syncState = 'idle';
@@ -958,7 +956,7 @@
   </section>
 
   <!-- SECTION 5: SKILL CATEGORY PALETTE -->
-  {#if colors && Object.keys(colors).length > 0}
+  {#if colors && Object.keys(colors).filter(k => k !== 'theme').length > 0}
     <section class="relative p-4 sm:p-6 rounded-3xl border border-[var(--border-card)] bg-[var(--bg-surface)]/85 shadow-sm space-y-4 backdrop-blur-xl z-10 w-full overflow-hidden">
       <div class="flex items-center gap-2.5 border-b border-[var(--border-subtle)] pb-4">
         <div class="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
@@ -976,7 +974,7 @@
 
       <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 pt-1 w-full">
         {#each Object.keys(colors).filter(k => k !== 'theme') as category}
-          {@const colorVal = colors[category]?.dark_primary || '#64748b'}
+          {@const colorVal = colors[category]?.dark_primary || colors[category]?.primary || '#64748b'}
           <div class="relative flex items-center justify-between p-3 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-card)] hover:border-[var(--border-hover)] transition-all overflow-hidden group">
             
             <div class="space-y-0.5 min-w-0 pr-2">
@@ -1001,6 +999,7 @@
                   if (!colors[category]) colors[category] = {};
                   colors[category].dark_primary = e.target.value;
                   colors[category].light_primary = e.target.value;
+                  colors[category].primary = e.target.value;
                   triggerAutoSave(true);
                 }}
                 class="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
@@ -1031,7 +1030,7 @@
 
       <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-1 w-full">
         {#each Object.keys(tones) as toneNum}
-          {@const toneVal = tones[toneNum] || '#64748b'}
+          {@const toneVal = typeof tones[toneNum] === 'object' ? (tones[toneNum]?.primary || '#64748b') : tones[toneNum] || '#64748b'}
           <div class="relative flex flex-col items-center justify-between p-3.5 rounded-2xl bg-[var(--bg-base)] border border-[var(--border-card)] text-center space-y-2 group hover:border-[var(--border-hover)] transition-all">
             <span class="text-xs font-mono font-black text-[var(--text-primary)]">
               Tone {toneNum}
@@ -1040,7 +1039,7 @@
             <label 
               for={`tone-${toneNum}`}
               class="relative w-8 h-8 rounded-xl border border-white/10 shrink-0 cursor-pointer shadow-sm group-hover:scale-110 transition-transform"
-              style="background-color: {toneVal}; box-shadow: 0 0 10px {toneVal}60;"
+              style="background-color: toneVal; box-shadow: 0 0 10px {toneVal}60;"
             >
               <input
                 id={`tone-${toneNum}`}
@@ -1147,7 +1146,7 @@
             Data Snapshots & Vault
           </h2>
           <p class="text-[11px] text-[var(--text-muted)] max-w-md">
-            Project active Yjs CRDT room memory into a compressed SQLite archive on your disk
+            Project active from compressed SQLite archive on your disk
           </p>
         </div>
       </div>

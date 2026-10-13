@@ -1,15 +1,13 @@
-use crate::db::load_blob_for_room;
 use crate::notifications::{broadcast_push, NotificationEvent};
 use crate::state::AppState;
 use chrono::{Local, Timelike};
+use rusqlite::params;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{error, info};
-use yrs::updates::decoder::Decode;
-use yrs::{Doc, Map, ReadTxn, Transact, Update};
 
 pub fn start_notification_worker(state: Arc<AppState>) {
     tokio::spawn(async move {
@@ -58,49 +56,6 @@ async fn can_send(
     true
 }
 
-/// Helper to read a room's doc either from in-memory state.rooms or SQLite snapshot
-async fn get_or_load_room_doc(state: &Arc<AppState>, room_name: &str) -> Option<Doc> {
-    // 1. In-memory fast path
-    {
-        let rooms = state.rooms.read().await;
-        if let Some(room) = rooms.get(room_name) {
-            let doc_guard = room.doc.read().await;
-            let doc = Doc::new();
-            let update = doc_guard.transact().encode_diff_v1(&yrs::StateVector::default());
-            if let Ok(u) = Update::decode_v1(&update) {
-                {
-                    let mut txn = doc.transact_mut();
-                    let _ = txn.apply_update(u);
-                }
-                return Some(doc);
-            }
-        }
-    }
-
-    // 2. Fallback to SQLite blob storage
-    let state_db = state.clone();
-    let name_owned = room_name.to_string();
-    let blob_opt = tokio::task::spawn_blocking(move || {
-        let conn = state_db.db_conn.lock().unwrap();
-        load_blob_for_room(&conn, &name_owned)
-    })
-    .await
-    .ok()?;
-
-    if let Some(blob) = blob_opt {
-        if let Ok(update) = Update::decode_v1(&blob) {
-            let doc = Doc::new();
-            {
-                let mut txn = doc.transact_mut();
-                let _ = txn.apply_update(update);
-            }
-            return Some(doc);
-        }
-    }
-
-    None
-}
-
 // 🌟 Half-Life EMA Calculation mirroring momentumEngine.js 🌟
 fn calculate_ema(history: &[f64], baseline: f64, half_life_days: f64) -> f64 {
     if history.is_empty() {
@@ -131,7 +86,7 @@ struct LanguageSnapshot {
     speaking_mins: u32,
     revisions_done_today: u32,
 
-    // Completion Flags from calendar_index
+    // Completion Flags from daily_logs
     vocab_done: bool,
     ci_done: bool,
     listening_done: bool,
@@ -148,7 +103,7 @@ struct LanguageSnapshot {
     overdue_revisions_count: usize,
     urgent_pass_zero_or_one_dates: Vec<String>,
 
-    // Catch-Up Siphon Counts (Extracted from calendar_index without loading day rooms!)
+    // Catch-Up Siphon Counts
     unvoiced_words_pending: usize,
 }
 
@@ -156,194 +111,260 @@ async fn collect_snapshots(
     state: &Arc<AppState>,
     today_str: &str,
 ) -> Vec<LanguageSnapshot> {
-    let mut snapshots = Vec::new();
+    let state_clone = state.clone();
+    let today = today_str.to_string();
 
-    // 1. Load global:metadata room
-    let meta_doc = match get_or_load_room_doc(state, "global:metadata").await {
-        Some(doc) => doc,
-        None => return snapshots,
-    };
+    tokio::task::spawn_blocking(move || {
+        let conn = state_clone.db_conn.lock().unwrap();
+        let mut snapshots = Vec::new();
 
-    let (languages_map, cal_index_map) = {
-        let langs_map = meta_doc.get_or_insert_map("languages");
-        let cal_map = meta_doc.get_or_insert_map("calendar_index");
-        let txn = meta_doc.transact();
+        // 1. Fetch all active languages
+        let mut lang_stmt = match conn.prepare(
+            "SELECT code, goals_json, momentum_json, current_streak \
+             FROM languages WHERE deleted_at IS NULL",
+        ) {
+            Ok(stmt) => stmt,
+            Err(_) => return snapshots,
+        };
 
-        let mut langs_json = HashMap::new();
-        for (k, v) in langs_map.iter(&txn) {
-            let json_str = v.to_string(&txn);
-            if let Ok(parsed) = serde_json::from_str::<JsonValue>(&json_str) {
-                langs_json.insert(k.to_string(), parsed);
-            }
-        }
+        let lang_rows = lang_stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, u32>(3)?,
+                ))
+            })
+            .ok();
 
-        let mut cal_json = HashMap::new();
-        for (k, v) in cal_map.iter(&txn) {
-            let json_str = v.to_string(&txn);
-            if let Ok(parsed) = serde_json::from_str::<JsonValue>(&json_str) {
-                cal_json.insert(k.to_string(), parsed);
-            }
-        }
+        let languages: Vec<(String, String, String, u32)> = match lang_rows {
+            Some(rows) => rows.filter_map(Result::ok).collect(),
+            None => return snapshots,
+        };
 
-        (langs_json, cal_json)
-    };
+        for (lang_code, goals_json, momentum_json, current_streak) in languages {
+            let goals: Option<JsonValue> = serde_json::from_str(&goals_json).ok();
+            let mom: Option<JsonValue> = serde_json::from_str(&momentum_json).ok();
 
-    for (lang_code, lang_val) in languages_map {
-        let current_streak = lang_val.get("current_streak").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+            let listen_base = mom.as_ref().and_then(|m| m.get("listening")).and_then(|l| l.get("baseline")).and_then(|v| v.as_f64())
+                .or_else(|| goals.as_ref().and_then(|g| g.get("listening_minutes")).and_then(|v| v.as_f64())).unwrap_or(45.0);
+            let listen_floor = mom.as_ref().and_then(|m| m.get("listening")).and_then(|l| l.get("floor")).and_then(|v| v.as_f64()).unwrap_or(20.0);
+            let listen_ceil = mom.as_ref().and_then(|m| m.get("listening")).and_then(|l| l.get("ceiling")).and_then(|v| v.as_f64()).unwrap_or(90.0);
 
-        // Resolve momentum boundaries from language configuration
-        let mom = lang_val.get("momentum");
-        let goals = lang_val.get("goals");
+            let speak_base = mom.as_ref().and_then(|m| m.get("speaking")).and_then(|s| s.get("baseline")).and_then(|v| v.as_f64())
+                .or_else(|| goals.as_ref().and_then(|g| g.get("speaking_minutes")).and_then(|v| v.as_f64())).unwrap_or(10.0);
+            let speak_floor = mom.as_ref().and_then(|m| m.get("speaking")).and_then(|s| s.get("floor")).and_then(|v| v.as_f64()).unwrap_or(5.0);
+            let speak_ceil = mom.as_ref().and_then(|m| m.get("speaking")).and_then(|s| s.get("ceiling")).and_then(|v| v.as_f64()).unwrap_or(25.0);
 
-        let listen_base = mom.and_then(|m| m.get("listening")).and_then(|l| l.get("baseline")).and_then(|v| v.as_f64())
-            .or_else(|| goals.and_then(|g| g.get("listening_minutes")).and_then(|v| v.as_f64())).unwrap_or(45.0);
-        let listen_floor = mom.and_then(|m| m.get("listening")).and_then(|l| l.get("floor")).and_then(|v| v.as_f64()).unwrap_or(20.0);
-        let listen_ceil = mom.and_then(|m| m.get("listening")).and_then(|l| l.get("ceiling")).and_then(|v| v.as_f64()).unwrap_or(90.0);
+            let vocab_base = mom.as_ref().and_then(|m| m.get("vocab")).and_then(|w| w.get("baseline")).and_then(|v| v.as_f64())
+                .or_else(|| goals.as_ref().and_then(|g| g.get("vocab")).and_then(|v| v.as_f64())).unwrap_or(5.0);
+            let vocab_floor = mom.as_ref().and_then(|m| m.get("vocab")).and_then(|w| w.get("floor")).and_then(|v| v.as_f64()).unwrap_or(2.0);
+            let vocab_ceil = mom.as_ref().and_then(|m| m.get("vocab")).and_then(|w| w.get("ceiling")).and_then(|v| v.as_f64()).unwrap_or(10.0).min(10.0);
 
-        let speak_base = mom.and_then(|m| m.get("speaking")).and_then(|s| s.get("baseline")).and_then(|v| v.as_f64())
-            .or_else(|| goals.and_then(|g| g.get("speaking_minutes")).and_then(|v| v.as_f64())).unwrap_or(10.0);
-        let speak_floor = mom.and_then(|m| m.get("speaking")).and_then(|s| s.get("floor")).and_then(|v| v.as_f64()).unwrap_or(5.0);
-        let speak_ceil = mom.and_then(|m| m.get("speaking")).and_then(|s| s.get("ceiling")).and_then(|v| v.as_f64()).unwrap_or(25.0);
+            // 2. Fetch past daily logs for history and debt calculations
+            let mut past_listen_history = Vec::new();
+            let mut past_speak_history = Vec::new();
+            let mut past_vocab_history = Vec::new();
 
-        let vocab_base = mom.and_then(|m| m.get("vocab")).and_then(|w| w.get("baseline")).and_then(|v| v.as_f64())
-            .or_else(|| goals.and_then(|g| g.get("vocab")).and_then(|v| v.as_f64())).unwrap_or(5.0);
-        let vocab_floor = mom.and_then(|m| m.get("vocab")).and_then(|w| w.get("floor")).and_then(|v| v.as_f64()).unwrap_or(2.0);
-        let vocab_ceil = mom.and_then(|m| m.get("vocab")).and_then(|w| w.get("ceiling")).and_then(|v| v.as_f64()).unwrap_or(10.0).min(10.0);
+            let mut unvoiced_words_pending = 0;
+            let mut overdue_revisions_count = 0;
+            let mut urgent_pass_zero_or_one_dates = Vec::new();
 
-        // Gather recent history from calendar_index
-        let mut past_listen_history = Vec::new();
-        let mut past_speak_history = Vec::new();
-        let mut past_vocab_history = Vec::new();
-
-        let mut unvoiced_words_pending = 0;
-        let mut overdue_revisions_count = 0;
-        let mut urgent_pass_zero_or_one_dates = Vec::new();
-
-        for (cal_key, cal_obj) in &cal_index_map {
-            if cal_key.starts_with(&format!("{lang_code}:")) {
-                if let Some(date_str) = cal_obj.get("date").and_then(|d| d.as_str()) {
-                    if date_str < today_str {
-                        let l_sec = cal_obj.get("listening_time").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        let s_sec = cal_obj.get("speaking_time").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        let w_cnt = cal_obj.get("word").and_then(|v| v.as_f64()).unwrap_or(0.0);
-
-                        past_listen_history.push(l_sec / 60.0);
-                        past_speak_history.push(s_sec / 60.0);
-                        past_vocab_history.push(w_cnt);
-
-                        // Overdue check
-                        let due_date = cal_obj.get("due_date").and_then(|d| d.as_str()).unwrap_or(date_str);
-                        let rev = cal_obj.get("revision").and_then(|r| r.as_u64()).unwrap_or(0);
-                        if due_date <= today_str || rev == 0 {
+            if let Ok(mut logs_stmt) = conn.prepare(
+                "SELECT log_date, due_date, revision, unvoiced_words_json \
+                 FROM daily_logs \
+                 WHERE lang_code = ?1 AND log_date < ?2 AND deleted_at IS NULL \
+                 ORDER BY log_date DESC",
+            ) {
+                if let Ok(rows) = logs_stmt.query_map(params![lang_code, today], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, u32>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                }) {
+                    for (date_str, due_date_opt, rev, unvoiced_json) in rows.flatten() {
+                        let due_date = due_date_opt.unwrap_or_else(|| date_str.clone());
+                        if due_date <= today || rev == 0 {
                             overdue_revisions_count += 1;
                             if rev <= 1 && urgent_pass_zero_or_one_dates.len() < 3 {
-                                urgent_pass_zero_or_one_dates.push(date_str.to_string());
+                                urgent_pass_zero_or_one_dates.push(date_str);
                             }
                         }
 
-                        // Count unvoiced words directly from telemetry array
-                        if let Some(arr) = cal_obj.get("unvoiced_words_indices").and_then(|v| v.as_array()) {
+                        if let Ok(arr) = serde_json::from_str::<Vec<JsonValue>>(&unvoiced_json) {
                             unvoiced_words_pending += arr.len();
                         }
                     }
                 }
             }
-        }
 
-        // Calculate today's dynamic targets via momentum EMA
-        let ema_listen = calculate_ema(&past_listen_history, listen_base, 2.5);
-        let ema_speak = calculate_ema(&past_speak_history, speak_base, 2.5);
-        let ema_vocab = calculate_ema(&past_vocab_history, vocab_base, 2.5);
+            // Gather recent audio/word counts from words & activities for EMA inputs
+            if let Ok(mut words_hist_stmt) = conn.prepare(
+                "SELECT COUNT(*) FROM words \
+                 WHERE lang_code = ?1 AND log_date < ?2 AND deleted_at IS NULL \
+                 GROUP BY log_date ORDER BY log_date DESC LIMIT 14",
+            ) {
+                if let Ok(rows) = words_hist_stmt.query_map(params![lang_code, today], |row| row.get::<_, f64>(0)) {
+                    past_vocab_history = rows.flatten().collect();
+                }
+            }
 
-        let target_listening_mins = (ema_listen.round() as u32).clamp(listen_floor as u32, listen_ceil as u32);
-        let target_speaking_mins = (ema_speak.round() as u32).clamp(speak_floor as u32, speak_ceil as u32);
-        let target_vocab = (ema_vocab.round() as u32).clamp(vocab_floor as u32, vocab_ceil as u32);
-        let target_ci = goals.and_then(|g| g.get("ci")).and_then(|v| v.as_u64()).unwrap_or(1) as u32;
-
-        // Today's current progress
-        let today_cal_key = format!("{lang_code}:{today_str}");
-        let today_cal = cal_index_map.get(&today_cal_key);
-
-        let words_count = today_cal.and_then(|c| c.get("word")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let ci_count = today_cal.and_then(|c| c.get("ci")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let listening_sec = today_cal.and_then(|c| c.get("listening_time")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let speaking_sec = today_cal.and_then(|c| c.get("speaking_time")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-
-        let reviews_obj = today_cal.and_then(|c| c.get("reviews_completed"));
-        let revisions_done_today = reviews_obj.and_then(|r| r.get("day_revisions")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-
-        let vocab_done = today_cal.and_then(|c| c.get("vocab_done")).and_then(|v| v.as_bool()).unwrap_or(words_count >= target_vocab);
-        let ci_done = today_cal.and_then(|c| c.get("ci_done")).and_then(|v| v.as_bool()).unwrap_or(ci_count >= target_ci);
-        let listening_done = today_cal.and_then(|c| c.get("listening_done")).and_then(|v| v.as_bool()).unwrap_or((listening_sec / 60) >= target_listening_mins);
-        let speaking_done = today_cal.and_then(|c| c.get("speaking_done")).and_then(|v| v.as_bool()).unwrap_or((speaking_sec / 60) >= target_speaking_mins);
-        let grammar_done = today_cal.and_then(|c| c.get("grammar_done")).and_then(|v| v.as_bool()).unwrap_or(false);
-
-        // 2. Load {lang_code}:srs room (Tri-Deck check + lapses)
-        let srs_room_name = format!("{lang_code}:srs");
-        let (visual_srs_due, audio_srs_due, write_srs_due, leech_words) = if let Some(srs_doc) = get_or_load_room_doc(state, &srs_room_name).await {
-            let queue_map = srs_doc.get_or_insert_map("queue");
-            let txn = srs_doc.transact();
-
-            let mut vis_count = 0;
-            let mut aud_count = 0;
-            let mut write_count = 0;
-            let mut leeches = Vec::new();
-
-            for (_k, v) in queue_map.iter(&txn) {
-                let json_str = v.to_string(&txn);
-                if let Ok(card) = serde_json::from_str::<JsonValue>(&json_str) {
-                    let card_type = card.get("card_type").and_then(|c| c.as_str()).unwrap_or("visual");
-                    let due_date = card.get("due_date").and_then(|d| d.as_str()).unwrap_or("");
-                    let lapses = card.get("lapses").and_then(|l| l.as_u64()).unwrap_or(0);
-                    let native = card.get("native").and_then(|n| n.as_str()).unwrap_or("").to_string();
-
-                    if due_date <= today_str && !due_date.is_empty() {
-                        match card_type {
-                            "listening" | "audio" => aud_count += 1,
-                            "writing" => write_count += 1,
-                            _ => vis_count += 1,
+            if let Ok(mut act_hist_stmt) = conn.prepare(
+                "SELECT activity_type, SUM(link_duration), SUM(audio_duration) \
+                 FROM activities \
+                 WHERE lang_code = ?1 AND log_date < ?2 AND deleted_at IS NULL \
+                 GROUP BY log_date, activity_type ORDER BY log_date DESC LIMIT 28",
+            ) {
+                if let Ok(rows) = act_hist_stmt.query_map(params![lang_code, today], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, f64>(1)?,
+                        row.get::<_, f64>(2)?,
+                    ))
+                }) {
+                    for (act_type, link_dur, audio_dur) in rows.flatten() {
+                        if act_type == "ci" || act_type == "listening" {
+                            past_listen_history.push(link_dur / 60.0);
                         }
-                    }
-
-                    // Leech identification: lapses >= 3
-                    if lapses >= 3 && !native.is_empty() && leeches.len() < 3 {
-                        leeches.push(native);
+                        if audio_dur > 0.0 {
+                            past_speak_history.push(audio_dur / 60.0);
+                        }
                     }
                 }
             }
-            (vis_count, aud_count, write_count, leeches)
-        } else {
-            (0, 0, 0, Vec::new())
-        };
 
-        snapshots.push(LanguageSnapshot {
-            lang_code,
-            current_streak,
-            target_vocab,
-            target_listening_mins,
-            target_speaking_mins,
-            target_ci,
-            words_count,
-            ci_count,
-            listening_mins: listening_sec / 60,
-            speaking_mins: speaking_sec / 60,
-            revisions_done_today,
-            vocab_done,
-            ci_done,
-            listening_done,
-            speaking_done,
-            grammar_done,
-            visual_srs_due,
-            audio_srs_due,
-            write_srs_due,
-            leech_words,
-            overdue_revisions_count,
-            urgent_pass_zero_or_one_dates,
-            unvoiced_words_pending,
-        });
-    }
+            // Calculate dynamic targets
+            let ema_listen = calculate_ema(&past_listen_history, listen_base, 2.5);
+            let ema_speak = calculate_ema(&past_speak_history, speak_base, 2.5);
+            let ema_vocab = calculate_ema(&past_vocab_history, vocab_base, 2.5);
 
-    snapshots
+            let target_listening_mins = (ema_listen.round() as u32).clamp(listen_floor as u32, listen_ceil as u32);
+            let target_speaking_mins = (ema_speak.round() as u32).clamp(speak_floor as u32, speak_ceil as u32);
+            let target_vocab = (ema_vocab.round() as u32).clamp(vocab_floor as u32, vocab_ceil as u32);
+            let target_ci = goals.as_ref().and_then(|g| g.get("ci")).and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+
+            // 3. Today's current progress from daily_logs, words, and activities
+            let (revisions_done_today, vocab_done, ci_done, listening_done, speaking_done, grammar_done) = conn
+                .query_row(
+                    "SELECT revisions_done, vocab_done, ci_done, listening_done, speaking_done, grammar_done \
+                     FROM daily_logs WHERE lang_code = ?1 AND log_date = ?2",
+                    params![lang_code, today],
+                    |row| {
+                        Ok((
+                            row.get::<_, u32>(0)?,
+                            row.get::<_, i64>(1)? > 0,
+                            row.get::<_, i64>(2)? > 0,
+                            row.get::<_, i64>(3)? > 0,
+                            row.get::<_, i64>(4)? > 0,
+                            row.get::<_, i64>(5)? > 0,
+                        ))
+                    },
+                )
+                .unwrap_or((0, false, false, false, false, false));
+
+            let words_count: u32 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM words WHERE lang_code = ?1 AND log_date = ?2 AND deleted_at IS NULL",
+                    params![lang_code, today],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            let ci_count: u32 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM activities WHERE lang_code = ?1 AND log_date = ?2 AND activity_type = 'ci' AND deleted_at IS NULL",
+                    params![lang_code, today],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            let listening_sec: f64 = conn
+                .query_row(
+                    "SELECT COALESCE(SUM(link_duration), 0.0) FROM activities \
+                     WHERE lang_code = ?1 AND log_date = ?2 AND (activity_type = 'listening' OR activity_type = 'ci') AND deleted_at IS NULL",
+                    params![lang_code, today],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0.0);
+
+            let speaking_sec: f64 = conn
+                .query_row(
+                    "SELECT COALESCE( \
+                        (SELECT SUM(audio_duration) FROM words WHERE lang_code = ?1 AND log_date = ?2 AND deleted_at IS NULL), 0.0 \
+                     ) + COALESCE( \
+                        (SELECT SUM(audio_duration) FROM activities WHERE lang_code = ?1 AND log_date = ?2 AND deleted_at IS NULL), 0.0 \
+                     )",
+                    params![lang_code, today],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0.0);
+
+            // 4. Tri-Deck SRS Backlog & Leeches from `word_srs` table
+            let mut visual_srs_due = 0;
+            let mut audio_srs_due = 0;
+            let mut write_srs_due = 0;
+            let mut leech_words = Vec::new();
+
+            if let Ok(mut srs_stmt) = conn.prepare(
+                "SELECT card_type, native_script, lapses \
+                 FROM word_srs \
+                 WHERE lang_code = ?1 AND due_date <= ?2 AND deleted_at IS NULL",
+            ) {
+                if let Ok(rows) = srs_stmt.query_map(params![lang_code, today], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, u32>(2)?,
+                    ))
+                }) {
+                    for (card_type, native, lapses) in rows.flatten() {
+                        match card_type.as_str() {
+                            "listening" | "audio" => audio_srs_due += 1,
+                            "writing" => write_srs_due += 1,
+                            _ => visual_srs_due += 1,
+                        }
+
+                        if lapses >= 3 && !native.is_empty() && leech_words.len() < 3 {
+                            leech_words.push(native);
+                        }
+                    }
+                }
+            }
+
+            snapshots.push(LanguageSnapshot {
+                lang_code,
+                current_streak,
+                target_vocab,
+                target_listening_mins,
+                target_speaking_mins,
+                target_ci,
+                words_count,
+                ci_count,
+                listening_mins: (listening_sec / 60.0).round() as u32,
+                speaking_mins: (speaking_sec / 60.0).round() as u32,
+                revisions_done_today,
+                vocab_done: vocab_done || words_count >= target_vocab,
+                ci_done: ci_done || ci_count >= target_ci,
+                listening_done: listening_done || (listening_sec / 60.0) >= target_listening_mins as f64,
+                speaking_done: speaking_done || (speaking_sec / 60.0) >= target_speaking_mins as f64,
+                grammar_done,
+                visual_srs_due,
+                audio_srs_due,
+                write_srs_due,
+                leech_words,
+                overdue_revisions_count,
+                urgent_pass_zero_or_one_dates,
+                unvoiced_words_pending,
+            });
+        }
+
+        snapshots
+    })
+    .await
+    .unwrap_or_default()
 }
 
 async fn evaluate_and_notify(
@@ -456,7 +477,7 @@ async fn evaluate_and_notify(
         // AUDITS & SIPHON ALERTS (Strictly After 15:00)
         // =====================================================================
         if current_hour >= 15 && current_hour < 23 {
-            // 1. Unvoiced Words Siphon Alert (Metered batch without parsing day rooms)
+            // 1. Unvoiced Words Siphon Alert
             if snap.unvoiced_words_pending > 0 {
                 let key = format!("{today_str}:voice_siphon:{lang_code}");
                 if can_send(tracker, &key, now_ts, 120).await {
@@ -562,7 +583,7 @@ async fn evaluate_and_notify(
             }
         }
 
-        // 🌟 VICTORY LAP (Adaptive goals cleared + SRS queue clean) 🌟
+        // 🌟 VICTORY LAP 🌟
         let all_goals_met = snap.vocab_done 
             && snap.ci_done 
             && snap.listening_done 

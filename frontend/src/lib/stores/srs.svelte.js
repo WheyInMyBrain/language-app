@@ -1,64 +1,31 @@
-// frontend/src/lib/stores/srs.svelte.js
-import { createSyncedDoc, getDocHandle } from '../yjs.js';
+import { initLocalDatabase, stageLocalMutation } from '../db.js';
 import { calculateNextSRSState } from '../srsEngine.js';
 import { metadataStore } from './metadata.svelte.js';
 
 class SrsStore {
   cards = $state({});
   isLoaded = $state(false);
-  activeRoom = $state(null);
-  #docHandle = null;
+  activeLang = $state(null);
 
-  connect(langCode) {
+  async connect(langCode) {
     if (!langCode) return;
-    const roomName = `${langCode}:srs`;
-    if (this.activeRoom === roomName) return;
+    if (this.activeLang === langCode && this.isLoaded) return;
 
-    if (this.#docHandle) {
-      this.#docHandle.destroy();
-      this.cards = {};
-      this.isLoaded = false;
-    }
+    this.activeLang = langCode;
+    const db = await initLocalDatabase();
 
-    this.activeRoom = roomName;
-    this.#docHandle = createSyncedDoc(roomName);
+    // Query IndexedDB directly for word_srs matching active language
+    const all = await db.getAllFromIndex('word_srs', 'by_lang', langCode);
+    const cardMap = {};
 
-    const { doc, idbProvider, wsProvider } = this.#docHandle;
-    const queueMap = doc.getMap('queue');
-
-    const syncState = () => {
-      this.cards = queueMap.toJSON();
-      if (Object.keys(this.cards).length > 0) {
-        this.isLoaded = true;
+    for (const card of all) {
+      if (!card.deleted_at) {
+        cardMap[card.card_key] = card;
       }
-    };
-
-    // Initial check in case doc already has data
-    syncState();
-
-    // Observe local map changes
-    queueMap.observe(syncState);
-
-    // Sync from IndexedDB
-    idbProvider.on('synced', () => {
-      syncState();
-      this.isLoaded = true;
-    });
-
-    // Sync from WebSocket server (catches the server blob arrival)
-    if (wsProvider) {
-      wsProvider.on('sync', (isSynced) => {
-        if (isSynced) {
-          syncState();
-          this.isLoaded = true;
-        }
-      });
     }
 
-    // Direct Y.Doc update listener catches incoming remote binary changes
-    doc.on('update', () => {
-      syncState();
-    });
+    this.cards = cardMap;
+    this.isLoaded = true;
   }
 
   getDueItems(todayStr, cardType = null) {
@@ -90,20 +57,14 @@ class SrsStore {
   }
 
   /**
-   * Rates an SRS card, tracks lapses & last_reviewed, and records review count in calendar_index.
+   * Rates an SRS card, writes locally + outbox, and updates calendar metadata.
    */
   async rateCard(langCode, cardKey, grade) {
     if (!langCode || !cardKey) return null;
 
-    const handle = this.#docHandle || getDocHandle(`${langCode}:srs`);
-    if (!handle?.doc) {
-      throw new Error(`Yjs document for "${langCode}:srs" not found.`);
-    }
-
-    const queueMap = handle.doc.getMap('queue');
-    const existing = queueMap.get(cardKey);
+    const existing = this.cards[cardKey];
     if (!existing) {
-      throw new Error(`Card "${cardKey}" not found in queue.`);
+      throw new Error(`Card "${cardKey}" not found in local queue.`);
     }
 
     const today = new Date().toISOString().slice(0, 10);
@@ -125,22 +86,27 @@ class SrsStore {
     const nextReps = isLapse ? 0 : currentReps + 1;
     const nextLapses = isLapse ? currentLapses + 1 : currentLapses;
 
-    // Prune transient UI keys before writing to Yjs
     const { isDue, key: _omittedKey, ...persistedData } = existing;
 
-    handle.doc.transact(() => {
-      queueMap.set(cardKey, {
-        ...persistedData,
-        interval: nextState.interval,
-        ease: nextState.ease,
-        due_date: nextState.due_date,
-        reps: nextReps,
-        lapses: nextLapses,
-        last_reviewed: today
-      });
-    });
+    const updatedCard = {
+      ...persistedData,
+      card_key: cardKey,
+      lang_code: langCode,
+      interval: nextState.interval,
+      ease: nextState.ease,
+      due_date: nextState.due_date,
+      reps: nextReps,
+      lapses: nextLapses,
+      last_reviewed: today
+    };
 
-    // 🌟 Atomically record SRS review in today's calendar_index entry
+    // 1. Optimistic UI update
+    this.cards[cardKey] = updatedCard;
+
+    // 2. Stage to IndexedDB and sync outbox
+    await stageLocalMutation('word_srs', cardKey, updatedCard);
+
+    // 3. Atomically record review in calendar_index
     const cardType = existing.card_type || 'visual';
     metadataStore.recordReview(langCode, today, 'srs', cardType);
 

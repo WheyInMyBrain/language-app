@@ -1,6 +1,8 @@
 <!-- frontend/src/pages/DayPage.svelte -->
+
 <script>
-  import { createSyncedDoc } from '../lib/yjs.js';
+  import { untrack } from 'svelte';
+  import { initLocalDatabase } from '../lib/db.js';
   import { 
     addWordToDay, 
     updateWordInDay, 
@@ -38,12 +40,15 @@
 
   let { date, langCode, onSelectDate } = $props();
 
-  let dayHandle = null;
   let words = $state([]);
   let activities = $state([]);
   let session = $state({ revision: 0, interval: 0, ease: 2.5, due_date: null });
   let isLoaded = $state(false);
   let activeFilter = $state('all'); // 'all' | 'vocab' | 'ci' | 'listening' | 'grammar'
+
+  // Monotonic token to prevent out-of-order race conditions
+  let loadSequence = 0;
+  let activeDayKey = '';
 
   // Dynamic Language Theme Colors
   let colors = $derived(activeLanguage.colors || {});
@@ -96,144 +101,116 @@
     }
   }
 
-  // Yjs Sync Effect
+  // Pure Local-First Data Loader with sequence guard
+  async function loadDayData(curLang, curDate, token) {
+    const db = await initLocalDatabase();
+
+    const [dayWords, dayActs, logEntry] = await Promise.all([
+      db.getAllFromIndex('words', 'by_lang_date', [curLang, curDate]),
+      db.getAllFromIndex('activities', 'by_lang_date', [curLang, curDate]),
+      db.get('daily_logs', `${curLang}:${curDate}`)
+    ]);
+
+    // If another date scrub has already started, discard stale result
+    if (token !== undefined && token !== loadSequence) return;
+
+    words = dayWords
+      .filter((w) => !w.deleted_at)
+      .sort((a, b) => (a.word_index || 0) - (b.word_index || 0));
+
+    activities = dayActs
+      .filter((a) => !a.deleted_at)
+      .sort((a, b) => (a.item_index || 0) - (b.item_index || 0));
+
+    if (logEntry) {
+      session = {
+        revision: Number(logEntry.revision ?? 0),
+        interval: Number(logEntry.interval ?? 0),
+        ease: Number(logEntry.ease ?? 2.50),
+        due_date: logEntry.due_date || curDate
+      };
+    } else {
+      session = { revision: 0, interval: 0, ease: 2.5, due_date: curDate };
+    }
+
+    isLoaded = true;
+  }
+
+  // Reactive Effect triggered on Date/Lang Change
   $effect(() => {
     const curDate = date;
     const curLang = langCode;
     if (!curDate || !curLang) return;
 
-    ciIndexStore.connect(curLang);
-    listeningIndexStore.connect(curLang);
+    const targetKey = `${curLang}:${curDate}`;
+    if (activeDayKey === targetKey) return;
+    activeDayKey = targetKey;
 
-    isLoaded = false;
-    words = [];
-    activities = [];
-    session = { revision: 0, interval: 0, ease: 2.5, due_date: curDate };
+    const currentToken = ++loadSequence;
 
-    const roomName = `${curLang}:${curDate}`;
-    dayHandle = createSyncedDoc(roomName);
+    // Isolate store initialization from reactive dependency tracking
+    untrack(() => {
+      ciIndexStore.connect(curLang);
+      listeningIndexStore.connect(curLang);
+    });
 
-    const { doc, idbProvider, wsProvider } = dayHandle;
-    const wordsArray = doc.getArray('words');
-    const activitiesArray = doc.getArray('activities');
-    const metaMap = doc.getMap('meta');
-
-    let syncPending = false;
-    const batchedSync = () => {
-      if (syncPending) return;
-      syncPending = true;
-      queueMicrotask(() => {
-        syncPending = false;
-        words = wordsArray.toArray();
-        activities = activitiesArray.toArray();
-        
-        const rawSession = metaMap.get('session');
-        if (rawSession) {
-          session = {
-            revision: Number(rawSession.revision ?? 0),
-            interval: Number(rawSession.interval ?? 0),
-            ease: Number(rawSession.ease ?? 2.50),
-            due_date: rawSession.due_date || curDate
-          };
-        }
-      });
-    };
-
-    const handleSynced = () => {
-      batchedSync();
-      isLoaded = true;
-    };
-
-    doc.on('afterTransaction', batchedSync);
-    if (idbProvider && typeof idbProvider.on === 'function') {
-      idbProvider.on('synced', handleSynced);
-    }
-
-    const handleWsSync = (isSynced) => {
-      if (isSynced) handleSynced();
-    };
-
-    if (wsProvider && typeof wsProvider.on === 'function') {
-      wsProvider.on('sync', handleWsSync);
-    }
-
-    if (idbProvider?.synced) handleSynced();
-
-    return () => {
-      doc.off('afterTransaction', batchedSync);
-      if (idbProvider && typeof idbProvider.off === 'function') {
-        idbProvider.off('synced', handleSynced);
-      }
-      if (wsProvider && typeof wsProvider.off === 'function') {
-        wsProvider.off('sync', handleWsSync);
-      }
-      if (dayHandle) {
-        dayHandle.destroy();
-        dayHandle = null;
-      }
-    };
+    loadDayData(curLang, curDate, currentToken);
   });
 
-  function syncMetadataTotals() {
-    metadataStore.refreshDayTotals(langCode, date);
-  }
-
   async function handleAddWord(payload) {
-    if (!dayHandle) return;
-    await addWordToDay({ langCode, dateStr: date, dayDocHandle: dayHandle, wordData: payload });
-    syncMetadataTotals();
+    await addWordToDay({ langCode, dateStr: date, wordData: payload });
+    await loadDayData(langCode, date, loadSequence);
   }
 
   async function handleUpdateWord(wordIndex, payload) {
-    if (!dayHandle) return;
-    await updateWordInDay({ langCode, dateStr: date, dayDocHandle: dayHandle, wordIndex, wordData: payload });
-    syncMetadataTotals();
+    const target = words.find((w) => (w.word_index ?? w.id) === wordIndex);
+    if (!target) return;
+    await updateWordInDay({ langCode, dateStr: date, wordId: target.id, wordData: payload });
+    await loadDayData(langCode, date, loadSequence);
   }
 
   async function handleAddCI(payload) {
-    if (!dayHandle) return;
-    await addCIToDay({ langCode, dateStr: date, dayDocHandle: dayHandle, ciData: payload });
-    syncMetadataTotals();
+    await addCIToDay({ langCode, dateStr: date, ciData: payload });
+    await loadDayData(langCode, date, loadSequence);
   }
 
   async function handleUpdateCI(itemIndex, payload) {
-    if (!dayHandle) return;
-    await updateCIInDay({ langCode, dateStr: date, dayDocHandle: dayHandle, itemIndex, ciData: payload });
-    syncMetadataTotals();
+    const target = ciActivities.find((a) => a.item_index === itemIndex);
+    if (!target) return;
+    await updateCIInDay({ langCode, dateStr: date, activityId: target.id, ciData: payload });
+    await loadDayData(langCode, date, loadSequence);
   }
 
   async function handleAddListening(payload) {
-    if (!dayHandle) return;
-    await addListeningToDay({ langCode, dateStr: date, dayDocHandle: dayHandle, listeningData: payload });
-    syncMetadataTotals();
+    await addListeningToDay({ langCode, dateStr: date, listeningData: payload });
+    await loadDayData(langCode, date, loadSequence);
   }
 
   async function handleUpdateListening(itemIndex, payload) {
-    if (!dayHandle) return;
-    await updateListeningInDay({ langCode, dateStr: date, dayDocHandle: dayHandle, itemIndex, listeningData: payload });
-    syncMetadataTotals();
+    const target = listeningActivities.find((a) => a.item_index === itemIndex);
+    if (!target) return;
+    await updateListeningInDay({ langCode, dateStr: date, activityId: target.id, listeningData: payload });
+    await loadDayData(langCode, date, loadSequence);
   }
 
   async function handleAddGrammar(payload) {
-    if (!dayHandle) return;
-    await addGrammarToDay({ langCode, dateStr: date, dayDocHandle: dayHandle, grammarData: payload });
-    syncMetadataTotals();
+    await addGrammarToDay({ langCode, dateStr: date, grammarData: payload });
+    await loadDayData(langCode, date, loadSequence);
   }
 
   async function handleUpdateGrammar(itemIndex, payload) {
-    if (!dayHandle) return;
-    await updateGrammarInDay({ langCode, dateStr: date, dayDocHandle: dayHandle, itemIndex, grammarData: payload });
-    syncMetadataTotals();
+    const target = grammarActivities.find((a) => a.item_index === itemIndex);
+    if (!target) return;
+    await updateGrammarInDay({ langCode, dateStr: date, activityId: target.id, grammarData: payload });
+    await loadDayData(langCode, date, loadSequence);
   }
 
   async function handleSRSReview(grade) {
-    if (!dayHandle) return;
-    await processSessionSRSReview({ langCode, dateStr: date, dayDocHandle: dayHandle, grade });
-    syncMetadataTotals();
+    await processSessionSRSReview({ langCode, dateStr: date, grade });
+    await loadDayData(langCode, date, loadSequence);
   }
 </script>
 
-<!-- Added 'w-full max-w-full overflow-x-clip' to lock horizontal scroll completely -->
 <div 
   class="relative w-full max-w-full xl:max-w-6xl mx-auto space-y-6 pt-1 sm:pt-2 pb-24 px-2 sm:px-4 md:px-6 select-none box-border overflow-x-clip"
   style="--day-accent: {themeColor};"
@@ -247,7 +224,7 @@
         <Sparkles size={18} />
       </div>
       <p class="text-xs font-mono font-bold text-[var(--text-muted)] animate-pulse">
-        Synchronizing session canvas...
+        Loading session canvas...
       </p>
     </div>
   {:else}
@@ -339,7 +316,7 @@
       />
     </div>
 
-    <!-- 🌟 3. FILTER QUICK-JUMP CHIPS (Touch-scrollable with max-w-full containment) 🌟 -->
+    <!-- 🌟 3. FILTER QUICK-JUMP CHIPS 🌟 -->
     <div class="bloom-cascade delay-3 flex items-center gap-1.5 overflow-x-auto pb-1 pt-1 no-scrollbar z-20 max-w-full">
       <button
         type="button"
@@ -434,7 +411,6 @@
         <!-- PAVILION 1: VOCABULARY AUTO-WALL -->
         {#if activeFilter === 'all' || activeFilter === 'vocab'}
           <section class="bloom-cascade delay-3 space-y-4 relative w-full overflow-hidden">
-            <!-- Clipped background glow -->
             <div 
               class="pointer-events-none absolute -left-12 top-1/2 -translate-y-1/2 w-48 h-[120%] rounded-full blur-[90px] opacity-25 -z-10"
               style="background: radial-gradient(circle at 0% 50%, {vocabColor}, transparent 75%);"
@@ -462,7 +438,6 @@
             </div>
 
             {#if words.length > 0}
-              <!-- Adaptive grid: min(100%, 280px) avoids forced horizontal growth on narrow screens -->
               <div class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4 sm:gap-5 items-start w-full">
                 {#each words as word, i (`v_${word.id ?? word.word_index ?? i}`)}
                   <div 

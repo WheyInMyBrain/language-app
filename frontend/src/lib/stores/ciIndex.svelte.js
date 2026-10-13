@@ -1,30 +1,29 @@
-import { createSyncedDoc } from '../yjs.js';
+import { initLocalDatabase } from '../db.js';
 import { canonicalizeVideoUrl } from '../mediaResolver.js';
 
 class CIIndexStore {
   links = $state([]);
-  #handle = null;
   #currentLang = null;
 
-  connect(langCode) {
-    if (this.#currentLang === langCode && this.#handle) return;
-    if (this.#handle) this.#handle.destroy();
+  async connect(langCode) {
+    if (!langCode) return;
+    if (this.#currentLang === langCode && this.links.length > 0) return;
 
     this.#currentLang = langCode;
-    const roomName = `${langCode}:ci_index`;
-    this.#handle = createSyncedDoc(roomName);
+    await this.refresh();
+  }
 
-    const { doc, idbProvider } = this.#handle;
-    const linksArray = doc.getArray('links');
+  async refresh() {
+    if (!this.#currentLang) return;
+    const db = await initLocalDatabase();
 
-    const sync = () => {
-      this.links = linksArray.toArray();
-    };
+    const tx = db.transaction('activities', 'readonly');
+    const allActs = await tx.store.getAll();
+    await tx.done;
 
-    idbProvider.on('synced', sync);
-    linksArray.observe(sync);
-
-    if (idbProvider.synced) sync();
+    this.links = allActs
+      .filter((a) => a.lang_code === this.#currentLang && a.activity_type === 'ci' && !a.deleted_at && a.link)
+      .map((a) => a.link);
   }
 
   isDuplicate(rawUrl) {
