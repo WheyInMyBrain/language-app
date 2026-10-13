@@ -23,34 +23,6 @@
     ImageOff
   } from '@lucide/svelte';
 
-  // 🌟 EXACT SYNCHRONIZED TONE CHROMA ENGINE FROM VOCABSEARCHSTREAM 🌟
-  const tokenCache = new Map();
-  function getSynchronizedTokens(script, pron, cfg) {
-    const key = `${cfg?.code || 'zh-CN'}:${script || ''}:${pron || ''}`;
-    if (tokenCache.has(key)) return tokenCache.get(key);
-
-    const parsed = tokenizePhonetics(script, pron, cfg);
-    const primary = parsed.primaryTokens || [];
-    const secondary = parsed.secondaryTokens || [];
-
-    const coloredSecondary = secondary.filter(t => t.color);
-
-    const syncedPrimary = primary.map((tok, i) => {
-      if (tok.color) return tok;
-      const matchColor = secondary[i]?.color || coloredSecondary[i]?.color || coloredSecondary[0]?.color;
-      return matchColor ? { ...tok, color: matchColor } : tok;
-    });
-
-    const result = {
-      primaryTokens: syncedPrimary,
-      secondaryTokens: secondary
-    };
-
-    if (tokenCache.size > 800) tokenCache.clear();
-    tokenCache.set(key, result);
-    return result;
-  }
-
   let {
     type = 'vocab',
     lang = 'zh-CN',
@@ -60,19 +32,57 @@
     isOpen = false
   } = $props();
 
+  let langConfig = $derived(activeLanguage.current || {});
+  let effectiveLangCode = $derived(lang || langConfig.code || 'zh-CN');
+  let isRTL = $derived(langConfig.dir === 'rtl' || effectiveLangCode.startsWith('ar'));
+  let colors = $derived(activeLanguage.colors || {});
+  let themeColor = $derived(activeLanguage.themeColor || '#a855f7');
+
+  // 🌟 DYNAMIC SYNCHRONIZED TONE / HARAKAT CHROMA ENGINE 🌟
+  const tokenCache = new Map();
+  function getSynchronizedTokens(script, pron, cfg) {
+    const key = `${cfg?.code || 'zh-CN'}:${script || ''}:${pron || ''}`;
+    if (tokenCache.has(key)) return tokenCache.get(key);
+
+    let parsed = { primaryTokens: [], secondaryTokens: [] };
+
+    if (typeof cfg?.colorize === 'function') {
+      parsed = cfg.colorize(script, pron);
+    } else {
+      parsed = tokenizePhonetics(script, pron, cfg);
+    }
+
+    const primary = parsed.primaryTokens || [];
+    const secondary = parsed.secondaryTokens || [];
+    const coloredSecondary = secondary.filter(t => t.color);
+
+    const syncedPrimary = primary.map((tok, i) => {
+      if (tok.color) return tok;
+      const matchColor = secondary[i]?.color || coloredSecondary[i]?.color || coloredSecondary[0]?.color;
+      return matchColor ? { ...tok, color: matchColor } : tok;
+    });
+
+    const result = {
+      primaryTokens: syncedPrimary.length > 0 ? syncedPrimary : [{ text: script || '', color: null }],
+      secondaryTokens: secondary.length > 0 ? secondary : [{ text: pron || '', color: null }]
+    };
+
+    if (tokenCache.size > 800) tokenCache.clear();
+    tokenCache.set(key, result);
+    return result;
+  }
+
   let isExpanded = $state(false);$effect(() => {
     isExpanded = isOpen;
   });
 
   let isCopied = $state(false);
   let isSpeaking = $state(false);
-  let audioDuration = $state(0);
-  $effect(() => {
+  let audioDuration = $state(0);$effect(() => {
     audioDuration = item.audio_duration || 0;
   });
 
   // 🌟 ROBUST MEDIA LOADING STATE 🌟
-  // Only track changes to the link string itself, avoiding re-triggers on audio duration changes
   let lastLink = $state(null);
   let isMediaLoading = $state(false);
   let hasMediaError = $state(false);
@@ -91,7 +101,6 @@
     }
   });
 
-  // Action to instantly resolve cached images
   function initImage(node) {
     if (node.complete && node.naturalWidth > 0) {
       isMediaLoading = false;
@@ -107,10 +116,6 @@
   let isHovered = $state(false);
   let tiltTicking = false;
 
-  let langConfig = $derived(activeLanguage.current);
-  let colors = $derived(activeLanguage.colors || {});
-  let themeColor = $derived(activeLanguage.themeColor || '#a855f7');
-
   const typeMeta = $derived.by(() => {
     switch (type) {
       case 'vocab':
@@ -120,7 +125,7 @@
           color: colors.vocab?.dark_primary || colors.vocab?.primary || themeColor || '#10b981',
           colorSub: colors.vocab?.light_primary || '#34d399',
           audioCategory: 'vocab',
-          prompt: 'Practice pronunciation'
+          prompt: isRTL ? 'سجّل النطق' : 'Practice pronunciation'
         };
       case 'ci':
         return {
@@ -129,7 +134,7 @@
           color: colors.ci?.dark_primary || colors.ci?.primary || themeColor || '#a855f7',
           colorSub: colors.ci?.light_primary || '#c084fc',
           audioCategory: 'ci',
-          prompt: 'Practice shadowing'
+          prompt: isRTL ? 'تدريب الترديد' : 'Practice shadowing'
         };
       case 'listening':
         return {
@@ -138,7 +143,7 @@
           color: colors.listening?.dark_primary || colors.listening?.primary || themeColor || '#f97316',
           colorSub: colors.listening?.light_primary || '#fb923c',
           audioCategory: 'listening',
-          prompt: 'Summarise video'
+          prompt: isRTL ? 'ملخص الاستماع' : 'Summarise audio'
         };
       case 'grammar':
       default:
@@ -148,7 +153,7 @@
           color: colors.grammar?.dark_primary || colors.grammar?.primary || themeColor || '#0ea5e9',
           colorSub: colors.grammar?.light_primary || '#38bdf8',
           audioCategory: 'grammar',
-          prompt: 'Record audio'
+          prompt: isRTL ? 'تسجيل جملة القاعدة' : 'Record audio'
         };
     }
   });
@@ -181,7 +186,6 @@
   let duration = $derived(item.link_duration || item.durationSec || 0);
   let displayTimer = $derived(duration > 0 ? formatSecondsToTimer(duration) : null);
 
-  // RAF-Throttled Gyroscopic Mouse Move
   function handleMouseMove(e) {
     if (!cardEl || tiltTicking) return;
     tiltTicking = true;
@@ -218,7 +222,7 @@
     const textToSpeak = item.native_script || grammarTitle;
     if (!textToSpeak) return;
     isSpeaking = true;
-    playTTS(textToSpeak, langConfig?.code || 'zh-CN');
+    playTTS(textToSpeak, effectiveLangCode);
     setTimeout(() => (isSpeaking = false), 1200);
   }
 
@@ -294,7 +298,7 @@
     {#if type === 'vocab'}
       
       {#if item.link}
-        <div class="relative w-full min-h-[160px] max-h-80 overflow-hidden flex items-center justify-center p-3.5 z-10">
+        <div class="relative w-full min-h-[160px] max-h-80 overflow-hidden flex items-center justify-center p-3.5 z-10" dir="ltr">
           
           {#if isMediaLoading}
             <div 
@@ -366,9 +370,9 @@
       {/if}
 
       <div class="p-5 sm:p-6 flex flex-col justify-between flex-1 space-y-4 z-10 relative">
-        <div class="space-y-1.5">
+        <div class="space-y-1.5" dir={isRTL ? 'rtl' : 'ltr'}>
           {#if !item.link}
-            <div class="flex items-center justify-between pb-1">
+            <div class="flex items-center justify-between pb-1" dir="ltr">
               <span 
                 class="px-2.5 py-0.5 rounded-lg text-[10px] font-mono font-black border shadow-2xs"
                 style="
@@ -390,14 +394,22 @@
             </div>
           {/if}
 
-          <!-- Synchronized Tone Chroma Text -->
-          <div class="text-3xl sm:text-4xl font-black tracking-tight leading-none drop-shadow-xs">
-            <ColoredText tokens={vocabTokens.primaryTokens} fallbackClass="text-[var(--text-primary)]" />
+          <!-- Synchronized Colored Text -->
+          <div class="text-3xl sm:text-4xl font-black tracking-tight leading-normal drop-shadow-xs {isRTL ? 'font-arabic' : ''}">
+            <ColoredText 
+              tokens={vocabTokens.primaryTokens} 
+              fallbackClass="text-[var(--text-primary)]" 
+              lang={effectiveLangCode}
+            />
           </div>
 
           {#if item.pronunciation}
-            <div class="text-xs sm:text-sm font-mono font-bold tracking-wide">
-              <ColoredText tokens={vocabTokens.secondaryTokens} fallbackClass="text-[var(--text-muted)]" />
+            <div class="text-xs sm:text-sm font-mono font-bold tracking-wide" dir="ltr">
+              <ColoredText 
+                tokens={vocabTokens.secondaryTokens} 
+                fallbackClass="text-[var(--text-muted)]" 
+                lang={effectiveLangCode}
+              />
             </div>
           {/if}
         </div>
@@ -409,7 +421,7 @@
           <div class="overflow-hidden min-h-0">
             <div class="pt-3 border-t border-[var(--border-subtle)] space-y-3">
               <AudioBar 
-                {lang}
+                lang={effectiveLangCode}
                 {date}
                 category={typeMeta.audioCategory}
                 {index}
@@ -427,6 +439,7 @@
         <button
           type="button"
           onclick={() => (isExpanded = !isExpanded)}
+          dir={isRTL ? 'rtl' : 'ltr'}
           class="w-full pt-2 flex items-center justify-between text-[11px] font-mono font-bold text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer border-t border-[var(--border-subtle)]"
         >
           <span class="flex items-center gap-1.5">
@@ -444,7 +457,7 @@
     {:else if type === 'ci'}
 
       <div class="p-5 sm:p-6 space-y-4 flex flex-col justify-between flex-1 z-10 relative">
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between" dir="ltr">
           <div class="flex items-center gap-2">
             <span 
               class="px-2.5 py-0.5 rounded-lg text-[10px] font-mono font-black border shadow-2xs"
@@ -484,7 +497,7 @@
           </div>
         </div>
 
-        <div class="relative w-full min-h-[190px] rounded-2xl overflow-hidden border border-[var(--border-card)] shadow-2xl bg-black/60">
+        <div class="relative w-full min-h-[190px] rounded-2xl overflow-hidden border border-[var(--border-card)] shadow-2xl bg-black/60" dir="ltr">
           <VideoPlayer 
             src={item.link || ''} 
             accentColor={typeMeta.color} 
@@ -499,7 +512,7 @@
           <div class="overflow-hidden min-h-0">
             <div class="pt-3 border-t border-[var(--border-subtle)] space-y-3">
               <AudioBar 
-                {lang}
+                lang={effectiveLangCode}
                 {date}
                 category={typeMeta.audioCategory}
                 {index}
@@ -517,6 +530,7 @@
         <button
           type="button"
           onclick={() => (isExpanded = !isExpanded)}
+          dir={isRTL ? 'rtl' : 'ltr'}
           class="w-full pt-2 flex items-center justify-between text-[11px] font-mono font-bold text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer border-t border-[var(--border-subtle)]"
         >
           <span class="flex items-center gap-1.5">
@@ -533,7 +547,7 @@
     {:else if type === 'listening'}
 
       <div class="p-5 sm:p-6 space-y-4 flex flex-col justify-between flex-1 z-10 relative">
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between" dir="ltr">
           <div class="flex items-center gap-2">
             <span 
               class="px-2.5 py-0.5 rounded-lg text-[10px] font-mono font-black border shadow-2xs"
@@ -573,7 +587,7 @@
           </div>
         </div>
 
-        <div class="relative w-full min-h-[190px] rounded-2xl overflow-hidden border border-[var(--border-card)] shadow-2xl bg-black/60">
+        <div class="relative w-full min-h-[190px] rounded-2xl overflow-hidden border border-[var(--border-card)] shadow-2xl bg-black/60" dir="ltr">
           <VideoPlayer 
             src={item.link || ''} 
             accentColor={typeMeta.color} 
@@ -588,7 +602,7 @@
           <div class="overflow-hidden min-h-0">
             <div class="pt-3 border-t border-[var(--border-subtle)] space-y-3">
               <AudioBar 
-                {lang}
+                lang={effectiveLangCode}
                 {date}
                 category={typeMeta.audioCategory}
                 {index}
@@ -606,6 +620,7 @@
         <button
           type="button"
           onclick={() => (isExpanded = !isExpanded)}
+          dir={isRTL ? 'rtl' : 'ltr'}
           class="w-full pt-2 flex items-center justify-between text-[11px] font-mono font-bold text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer border-t border-[var(--border-subtle)]"
         >
           <span class="flex items-center gap-1.5">
@@ -622,7 +637,7 @@
     {:else}
 
       <div class="p-5 sm:p-6 space-y-4 flex flex-col justify-between flex-1 z-10 relative">
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between" dir="ltr">
           <span 
             class="px-2.5 py-0.5 rounded-lg text-[10px] font-mono font-black border shadow-2xs"
             style="
@@ -643,31 +658,35 @@
           </button>
         </div>
 
-        <div class="space-y-1.5">
-          <h3 class="text-2xl font-black text-[var(--text-primary)] tracking-tight drop-shadow-xs">
+        <div class="space-y-1.5" dir={isRTL ? 'rtl' : 'ltr'}>
+          <h3 class="text-2xl font-black text-[var(--text-primary)] tracking-tight drop-shadow-xs {isRTL ? 'font-arabic' : ''}">
             {grammarTitle}
           </h3>
           
           {#if grammarMeta.pronunciation}
-            <div class="text-xs font-mono font-bold text-[var(--text-muted)]">
-              <ColoredText tokens={grammarPronTokens.secondaryTokens} fallbackClass="text-[var(--text-muted)]" />
+            <div class="text-xs font-mono font-bold text-[var(--text-muted)]" dir="ltr">
+              <ColoredText 
+                tokens={grammarPronTokens.secondaryTokens} 
+                fallbackClass="text-[var(--text-muted)]" 
+                lang={effectiveLangCode}
+              />
             </div>
           {/if}
         </div>
 
         {#if grammarMeta.structure}
-          <div class="p-3.5 rounded-2xl bg-[var(--bg-base)]/80 border border-[var(--border-subtle)] space-y-1 shadow-inner">
+          <div class="p-3.5 rounded-2xl bg-[var(--bg-base)]/80 border border-[var(--border-subtle)] space-y-1 shadow-inner" dir={isRTL ? 'rtl' : 'ltr'}>
             <span class="text-[9px] font-mono font-black uppercase tracking-wider block" style="color: var(--card-accent);">
-              Formula
+              {isRTL ? 'الصياغة / النمط' : 'Formula'}
             </span>
-            <span class="text-xs sm:text-sm font-mono font-bold text-[var(--text-primary)] block">
+            <span class="text-xs sm:text-sm font-mono font-bold text-[var(--text-primary)] block {isRTL ? 'font-arabic' : ''}">
               {grammarMeta.structure}
             </span>
           </div>
         {/if}
 
         {#if grammarMeta.meaning}
-          <p class="text-xs text-[var(--text-muted)] leading-relaxed font-medium">
+          <p class="text-xs text-[var(--text-muted)] leading-relaxed font-medium {isRTL ? 'font-arabic text-right' : 'text-left'}" dir={isRTL ? 'rtl' : 'ltr'}>
             {grammarMeta.meaning}
           </p>
         {/if}
@@ -679,7 +698,7 @@
           <div class="overflow-hidden min-h-0">
             <div class="pt-3 border-t border-[var(--border-subtle)] space-y-3">
               <AudioBar 
-                {lang}
+                lang={effectiveLangCode}
                 {date}
                 category={typeMeta.audioCategory}
                 {index}
@@ -697,6 +716,7 @@
         <button
           type="button"
           onclick={() => (isExpanded = !isExpanded)}
+          dir={isRTL ? 'rtl' : 'ltr'}
           class="w-full pt-2 flex items-center justify-between text-[11px] font-mono font-bold text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors cursor-pointer border-t border-[var(--border-subtle)]"
         >
           <span class="flex items-center gap-1.5">
@@ -730,5 +750,9 @@
 
   .animate-radar {
     animation: radar 2.4s ease-in-out infinite;
+  }
+
+  :global(.font-arabic) {
+    font-family: 'Amiri', 'Scheherazade New', 'Noto Naskh Arabic', serif, system-ui;
   }
 </style>

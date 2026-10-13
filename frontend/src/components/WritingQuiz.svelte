@@ -77,8 +77,12 @@
     glareY = 50;
   }
 
-  let langConfig = $derived(activeLanguage.current);
+  let langConfig = $derived(activeLanguage.current || {});
   let colors = $derived(activeLanguage.colors || {});
+  let isRTL = $derived(langConfig.dir === 'rtl' || (langCode && langCode.startsWith('ar')));
+  let glyphConfig = $derived(langConfig.glyphConfig || {});
+  let gridType = $derived(glyphConfig.gridType || 'rice');
+
   let writeColor = $derived(
     colors.speaking?.primary || 
     colors.speaking?.dark_primary || 
@@ -118,9 +122,10 @@
   let curInt = $derived(Number(currCard?.interval ?? 0));
   let curEase = $derived(Number(currCard?.ease ?? 2.50));
 
-  // Extract all characters of the compound word
+  // Extract tokens: for RTL/Arabic, treat as single connected word; for Chinese, extract glyph array
   let charList = $derived.by(() => {
     if (!currCard?.native) return [];
+    if (isRTL) return [currCard.native.trim()];
     return Array.from(currCard.native.trim()).filter((ch) => !/^\s+$/.test(ch));
   });
 
@@ -166,10 +171,18 @@
 
   let selectedChar = $derived(charList[activeCharIdx] || '');
   let activeGlyph = $derived(glyphDataMap[selectedChar] || null);
+  let hasStrokeData = $derived(
+    Array.isArray(activeGlyph?.strokes) && activeGlyph.strokes.length > 0 && Array.isArray(activeGlyph?.medians)
+  );
 
-  // Play animation across the whole compound word in sequence
+  let labels = $derived(glyphConfig.labels || {
+    component1: 'Radical / Root',
+    component2: 'Decomposition / Pattern'
+  });
+
+  // Play animation across character sequence (CJK only)
   function playSequentialAnimation() {
-    if (charList.length === 0) return;
+    if (!hasStrokeData || charList.length === 0) return;
     if (animTimer) clearTimeout(animTimer);
 
     isPlayingAnimation = true;
@@ -198,13 +211,13 @@
     step();
   }
 
-  // 🌟 CONTINUOUS MULTI-CHARACTER CANVAS MODAL 🌟
+  // 🌟 CONTINUOUS FULL-WORD CANVAS DESK MODAL 🌟
   let isCanvasOpen = $state(false);
   let canvasEl = $state(null);
   let ctx = null;
   let isDrawing = false;
   let showGuidelines = $state(false);
-  let userStrokes = $state([]); // Array of raw paths drawn on the full board
+  let userStrokes = $state([]);
   let currentLine = [];
 
   function openCanvasModal() {
@@ -249,7 +262,7 @@
 
     if (!ctx) ctx = canvasEl.getContext('2d');
     ctx.strokeStyle = writeColor;
-    ctx.lineWidth = 14;
+    ctx.lineWidth = isRTL ? 16 : 14;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -293,7 +306,7 @@
     ctx.clearRect(0, 0, rect.width, rect.height);
 
     ctx.strokeStyle = writeColor;
-    ctx.lineWidth = 14;
+    ctx.lineWidth = isRTL ? 16 : 14;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -399,7 +412,7 @@
           <span class="w-1.5 h-1.5 rounded-full" style="background-color: {writeColor}; box-shadow: 0 0 6px {writeColor};"></span>
         </h2>
         <span class="text-[10px] font-mono text-neutral-500 dark:text-white/40 block">
-          Continuous Word Recall & Stroke Order Flow
+          Continuous Word Recall & Calligraphic Stroke Practice
         </span>
       </div>
     </div>
@@ -452,8 +465,8 @@
         </h3>
         <p class="text-xs text-neutral-500 dark:text-white/40 max-w-xs mx-auto leading-relaxed">
           {mode === 'review' 
-            ? `All scheduled character writing prompts are completed (${todayStr}).` 
-            : 'You reviewed all characters in the cram deck.'}
+            ? `All scheduled writing prompts are completed (${todayStr}).` 
+            : 'You reviewed all writing items in the cram deck.'}
         </p>
       </div>
 
@@ -520,14 +533,14 @@
           style="background: linear-gradient(90deg, transparent, {writeColor}, {writeColorSub}, transparent);"
         ></div>
 
-        <!-- Metadata Strip: Date, English Meaning, Due -->
+        <!-- Metadata Strip: Date, Meaning, Due -->
         <div class="w-full flex items-center justify-between text-[10px] font-mono font-bold text-neutral-500 dark:text-white/50 relative z-10">
           <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/10 shadow-2xs backdrop-blur-md">
             <Calendar size={10} />
             <span>{currCard.source_date ? currCard.source_date.slice(5) : 'Prompt'}</span>
           </span>
 
-          <!-- Full Compound Word Pinyin & English Title -->
+          <!-- Full Compound Word Phonetic & English Meaning -->
           <div class="flex items-center gap-2">
             <span class="text-sm sm:text-base font-black text-neutral-900 dark:text-white">
               {currCard.meaning || currCard.definition || 'Recall Writing'}
@@ -548,34 +561,42 @@
         <!-- 🌟 THE 3-COLUMN WORKSHOP ARENA 🌟 -->
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center relative z-10">
 
-          <!-- LEFT COLUMN: Radical & Structural Breakdown of inspected character -->
+          <!-- LEFT COLUMN: Radical / Root Breakdown -->
           <div class="lg:col-span-3 space-y-3 order-2 lg:order-1 text-left">
             <div class="p-3.5 rounded-2xl bg-white/60 dark:bg-black/50 border border-black/10 dark:border-white/10 shadow-xs space-y-2 backdrop-blur-md">
               <span class="text-[10px] font-mono font-bold uppercase tracking-wider text-neutral-400 dark:text-white/40 flex items-center justify-between">
-                <span class="flex items-center gap-1"><Layers size={11} style="color: {writeColor};" /> Radical</span>
-                <span class="text-white/40">Char {activeCharIdx + 1}/{charList.length}</span>
+                <span class="flex items-center gap-1"><Layers size={11} style="color: {writeColor};" /> {labels.component1}</span>
+                {#if charList.length > 1}
+                  <span class="text-white/40">1/{charList.length}</span>
+                {/if}
               </span>
-              <div class="flex items-baseline gap-2">
-                <span class="text-2xl font-black text-white font-serif">{activeGlyph?.component1 || '—'}</span>
-                <span class="text-xs font-mono font-bold text-white/50">{activeGlyph?.phonetic || ''}</span>
+              <div class="flex items-baseline gap-2" dir={isRTL ? 'rtl' : 'ltr'}>
+                <span class="text-2xl font-black text-white {isRTL ? 'font-arabic' : 'font-serif'}">
+                  {activeGlyph?.component1 || activeGlyph?.root || '—'}
+                </span>
+                <span class="text-xs font-mono font-bold text-white/50" dir="ltr">
+                  {activeGlyph?.phonetic || activeGlyph?.transliteration || ''}
+                </span>
               </div>
             </div>
 
             <div class="p-3.5 rounded-2xl bg-white/60 dark:bg-black/50 border border-black/10 dark:border-white/10 shadow-xs space-y-1.5 backdrop-blur-md">
               <span class="text-[10px] font-mono font-bold uppercase tracking-wider text-neutral-400 dark:text-white/40 flex items-center gap-1">
-                <BookOpen size={11} style="color: {writeColor};" /> Decomposition
+                <BookOpen size={11} style="color: {writeColor};" /> {labels.component2}
               </span>
-              <span class="text-xs font-mono font-bold text-neutral-800 dark:text-white/90 block">
-                {activeGlyph?.component2 || '—'}
+              <span class="text-xs font-mono font-bold text-neutral-800 dark:text-white/90 block {isRTL ? 'font-arabic text-right' : ''}">
+                {activeGlyph?.component2 || activeGlyph?.pattern || '—'}
               </span>
             </div>
           </div>
 
-          <!-- CENTER COLUMN: Unified Side-By-Side Stage for All Characters -->
+          <!-- CENTER COLUMN: Calligraphy Arena -->
           <div class="lg:col-span-6 flex flex-col items-center gap-3 order-1 lg:order-2">
             
-            <!-- 🌟 Unified Multi-Character Calligraphy Arena (Inside One Box) 🌟 -->
-            <div class="p-3 rounded-3xl bg-black/85 border border-white/20 shadow-2xl flex items-center justify-center gap-2 sm:gap-3 flex-wrap">
+            <div 
+              class="p-3 rounded-3xl bg-black/85 border border-white/20 shadow-2xl flex items-center justify-center gap-2 sm:gap-3 flex-wrap"
+              dir={isRTL ? 'rtl' : 'ltr'}
+            >
               {#each charList as ch, idx}
                 {@const isSelected = idx === activeCharIdx}
                 {@const gData = glyphDataMap[ch]}
@@ -588,19 +609,29 @@
                   tabindex="0"
                   onclick={() => (activeCharIdx = idx)}
                   onkeydown={(e) => { if (e.key === 'Enter') activeCharIdx = idx; }}
-                  class="relative w-28 h-28 sm:w-36 sm:h-36 rounded-2xl bg-black/60 border transition-all duration-200 cursor-pointer overflow-hidden p-2 flex items-center justify-center shadow-inner {isSelected 
+                  class="relative {isRTL ? 'w-auto min-w-[200px] px-6 h-32' : 'w-28 h-28 sm:w-36 sm:h-36'} rounded-2xl bg-black/60 border transition-all duration-200 cursor-pointer overflow-hidden p-2 flex items-center justify-center shadow-inner {isSelected 
                     ? 'border-white/80 ring-2' 
                     : 'border-white/15 hover:border-white/30'}"
                   style={isSelected ? `ring-color: ${writeColor};` : ''}
                 >
-                  <!-- Rice Grid -->
-                  <svg class="absolute inset-0 w-full h-full pointer-events-none opacity-15" viewBox="0 0 100 100">
-                    <line x1="50" y1="0" x2="50" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
-                    <line x1="0" y1="50" x2="100" y2="50" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
-                    <line x1="0" y1="0" x2="100" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
-                    <line x1="100" y1="0" x2="0" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
-                  </svg>
+                  <!-- GRID OVERLAYS -->
+                  {#if gridType === 'rice'}
+                    <svg class="absolute inset-0 w-full h-full pointer-events-none opacity-15" viewBox="0 0 100 100">
+                      <line x1="50" y1="0" x2="50" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
+                      <line x1="0" y1="50" x2="100" y2="50" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
+                      <line x1="0" y1="0" x2="100" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
+                      <line x1="100" y1="0" x2="0" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
+                    </svg>
+                  {:else if gridType === 'lined'}
+                    <svg class="absolute inset-0 w-full h-full pointer-events-none opacity-25" viewBox="0 0 100 100">
+                      <line x1="0" y1="32" x2="100" y2="32" stroke="white" stroke-width="0.5" stroke-dasharray="2,3" />
+                      <line x1="0" y1="50" x2="100" y2="50" stroke={writeColor} stroke-width="0.8" />
+                      <line x1="0" y1="65" x2="100" y2="65" stroke="white" stroke-width="1.2" />
+                      <line x1="0" y1="80" x2="100" y2="80" stroke="white" stroke-width="0.5" stroke-dasharray="2,3" />
+                    </svg>
+                  {/if}
 
+                  <!-- Vector Engine Branch (Chinese) -->
                   {#if gData?.strokes && gData.strokes.length > 0}
                     <svg viewBox="0 0 1024 1024" class="w-full h-full drop-shadow-md">
                       <defs>
@@ -611,7 +642,6 @@
                         {/each}
                       </defs>
 
-                      <!-- Static Completed Vector View -->
                       {#if !isPlayingAnimation}
                         <g transform="scale(1, -1) translate(0, -900)">
                           {#each gData.strokes as strokeD}
@@ -619,14 +649,12 @@
                           {/each}
                         </g>
                       {:else}
-                        <!-- Ghost Wireframe Background -->
                         <g transform="scale(1, -1) translate(0, -900)" opacity="0.12">
                           {#each gData.strokes as strokeD}
                             <path d={strokeD} fill="white" />
                           {/each}
                         </g>
 
-                        <!-- Sequential Stroke Animation -->
                         {#if gData.medians}
                           {#each gData.medians as medianPts, sIdx}
                             {@const isVisible = isPastChar || (isThisCharAnimating && sIdx < animStrokeIdx)}
@@ -652,33 +680,43 @@
                       {/if}
                     </svg>
                   {:else}
-                    <span class="text-3xl font-black text-white font-serif">{ch}</span>
+                    <!-- Typographic Preview (Arabic / Non-CJK) -->
+                    <span 
+                      class="font-black drop-shadow-lg {isRTL ? 'font-arabic text-4xl sm:text-5xl' : 'font-serif text-3xl'} text-white"
+                      style="color: {writeColor};"
+                    >
+                      {ch}
+                    </span>
                   {/if}
 
-                  <div class="absolute top-1.5 left-1.5 px-1.5 py-0.2 rounded bg-black/60 border border-white/10 text-[9px] font-mono font-bold text-white/60">
-                    {ch}
-                  </div>
+                  {#if !isRTL}
+                    <div class="absolute top-1.5 left-1.5 px-1.5 py-0.2 rounded bg-black/60 border border-white/10 text-[9px] font-mono font-bold text-white/60">
+                      {ch}
+                    </div>
+                  {/if}
                 </div>
               {/each}
             </div>
 
-            <!-- Animation Trigger -->
-            <button
-              type="button"
-              onclick={playSequentialAnimation}
-              disabled={isPlayingAnimation}
-              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-mono font-bold text-white transition-all active:scale-95 cursor-pointer shadow-xs disabled:opacity-50"
-            >
-              <Play size={12} class={isPlayingAnimation ? 'animate-spin text-emerald-400' : ''} />
-              <span>{isPlayingAnimation ? 'Playing Word Sequence...' : 'Play Word Stroke Order'}</span>
-            </button>
+            <!-- Animation Trigger (Enabled when vector data is available) -->
+            {#if hasStrokeData}
+              <button
+                type="button"
+                onclick={playSequentialAnimation}
+                disabled={isPlayingAnimation}
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-xs font-mono font-bold text-white transition-all active:scale-95 cursor-pointer shadow-xs disabled:opacity-50"
+              >
+                <Play size={12} class={isPlayingAnimation ? 'animate-spin text-emerald-400' : ''} />
+                <span>{isPlayingAnimation ? 'Playing Word Sequence...' : 'Play Stroke Order'}</span>
+              </button>
+            {/if}
           </div>
 
-          <!-- RIGHT COLUMN: Definition & Etymology Mnemonic -->
+          <!-- RIGHT COLUMN: Definition & Mnemonic -->
           <div class="lg:col-span-3 space-y-3 order-3 text-left">
             <div class="p-3.5 rounded-2xl bg-white/60 dark:bg-black/50 border border-black/10 dark:border-white/10 shadow-xs space-y-1 backdrop-blur-md">
               <span class="text-[10px] font-mono font-bold uppercase tracking-wider text-neutral-400 dark:text-white/40 block">
-                {selectedChar} Definition
+                Definition
               </span>
               <p class="text-xs font-medium text-neutral-800 dark:text-white/90 leading-snug line-clamp-3">
                 {activeGlyph?.definition || currCard.meaning || '—'}
@@ -703,7 +741,6 @@
         <div class="w-full flex flex-col items-center gap-3 pt-2 relative z-10 border-t border-black/[0.08] dark:border-white/10">
           
           {#if !isPracticeDone}
-            <!-- THE BIG "OPEN CANVAS" BUTTON -->
             <button
               type="button"
               onclick={openCanvasModal}
@@ -717,7 +754,6 @@
               <span>Open Writing Canvas</span>
             </button>
           {:else}
-            <!-- REVEALED SM-2 RATING DECK -->
             <div class="flex flex-col items-center gap-3 w-full animate-in fade-in duration-200">
               <div class="flex items-center gap-2">
                 <button
@@ -744,7 +780,7 @@
                 </button>
               </div>
 
-              <!-- 4 SRS Rating Buttons -->
+              <!-- SRS Rating Buttons -->
               <div class="flex gap-2 justify-center flex-wrap pt-1 w-full max-w-lg">
                 {#if mode === 'review'}
                   <button
@@ -814,7 +850,7 @@
   {/if}
 </div>
 
-<!-- 🌟 CONTINUOUS FULL-WORD PRACTICE CANVAS MODAL (BOTH CHARACTERS ON ONE DESK) 🌟 -->
+<!-- 🌟 CONTINUOUS FULL-WORD PRACTICE CANVAS MODAL 🌟 -->
 {#if isCanvasOpen}
   <div 
     use:portal
@@ -831,19 +867,19 @@
         style="background: linear-gradient(90deg, transparent 5%, {writeColor} 50%, transparent 95%); box-shadow: 0 0 16px {writeColor};"
       ></div>
 
-      <!-- Modal Header: Displays Full Word Prompt -->
-      <div class="flex items-center justify-between border-b border-white/10 pb-3">
+      <!-- Modal Header: Full Word Prompt -->
+      <div class="flex items-center justify-between border-b border-white/10 pb-3" dir={isRTL ? 'rtl' : 'ltr'}>
         <div class="flex items-center gap-3">
-          <span class="text-xl sm:text-2xl font-black text-white font-serif tracking-tight">
+          <span class="text-xl sm:text-2xl font-black text-white tracking-tight {isRTL ? 'font-arabic' : 'font-serif'}">
             {currCard.native}
           </span>
           {#if currCard.pronunciation}
-            <span class="text-xs sm:text-sm font-mono font-bold" style="color: {writeColor};">
+            <span class="text-xs sm:text-sm font-mono font-bold" style="color: {writeColor};" dir="ltr">
               [{currCard.pronunciation}]
             </span>
           {/if}
           <span class="text-xs sm:text-sm font-medium text-white/60">
-            • {currCard.meaning || currCard.definition}
+            — {currCard.meaning || currCard.definition}
           </span>
         </div>
 
@@ -856,43 +892,61 @@
         </button>
       </div>
 
-      <!-- 🌟 CONTINUOUS FULL-WORD CANVAS DESK (N Adjacent Cells Under ONE Drawing Canvas) 🌟 -->
+      <!-- 🌟 CONTINUOUS PRACTICE DESK 🌟 -->
       <div class="relative w-full h-[320px] sm:h-[400px] rounded-3xl bg-black/90 border border-white/20 shadow-2xl overflow-hidden touch-none flex items-center justify-center p-2">
         
-        <!-- Multi-Cell Rice Grid (Each Character Gets Its Standard Square Cell) -->
-        <div class="absolute inset-0 flex items-center justify-center pointer-events-none p-2 gap-3">
-          {#each charList as ch}
-            {@const gData = glyphDataMap[ch]}
-            <div class="relative aspect-square h-full max-h-[360px] rounded-2xl border border-white/10 bg-black/40 overflow-hidden flex items-center justify-center">
-              
-              <!-- Rice Grid -->
-              <svg class="absolute inset-0 w-full h-full opacity-20" viewBox="0 0 100 100">
-                <line x1="50" y1="0" x2="50" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
-                <line x1="0" y1="50" x2="100" y2="50" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
-                <line x1="0" y1="0" x2="100" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
-                <line x1="100" y1="0" x2="0" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
-              </svg>
-
-              <!-- Full-Word Ghost Guidelines (All Characters Visible Simultaneously) -->
-              {#if showGuidelines && gData?.strokes}
-                <svg viewBox="0 0 1024 1024" class="absolute inset-4 w-[calc(100%-32px)] h-[calc(100%-32px)] drop-shadow-md">
-                  <g transform="scale(1, -1) translate(0, -900)" opacity="0.18">
-                    {#each gData.strokes as strokeD}
-                      <path d={strokeD} fill="white" />
-                    {/each}
-                  </g>
+        <!-- CALLIGRAPHY DESK GUIDES -->
+        {#if gridType === 'rice'}
+          <!-- Chinese: N Adjacent Square Cells -->
+          <div class="absolute inset-0 flex items-center justify-center pointer-events-none p-2 gap-3">
+            {#each charList as ch}
+              {@const gData = glyphDataMap[ch]}
+              <div class="relative aspect-square h-full max-h-[360px] rounded-2xl border border-white/10 bg-black/40 overflow-hidden flex items-center justify-center">
+                <svg class="absolute inset-0 w-full h-full opacity-20" viewBox="0 0 100 100">
+                  <line x1="50" y1="0" x2="50" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
+                  <line x1="0" y1="50" x2="100" y2="50" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
+                  <line x1="0" y1="0" x2="100" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
+                  <line x1="100" y1="0" x2="0" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="2,2" />
                 </svg>
-              {/if}
 
-              <!-- Cell Character Identifier Tag -->
-              <span class="absolute top-2 left-2 text-[10px] font-mono font-bold text-white/30">
-                {ch}
-              </span>
-            </div>
-          {/each}
-        </div>
+                {#if showGuidelines && gData?.strokes}
+                  <svg viewBox="0 0 1024 1024" class="absolute inset-4 w-[calc(100%-32px)] h-[calc(100%-32px)] drop-shadow-md">
+                    <g transform="scale(1, -1) translate(0, -900)" opacity="0.18">
+                      {#each gData.strokes as strokeD}
+                        <path d={strokeD} fill="white" />
+                      {/each}
+                    </g>
+                  </svg>
+                {/if}
 
-        <!-- 🌟 THE SINGLE CONTINUOUS HTML5 CANVAS FOR THE ENTIRE WORD 🌟 -->
+                <span class="absolute top-2 left-2 text-[10px] font-mono font-bold text-white/30">
+                  {ch}
+                </span>
+              </div>
+            {/each}
+          </div>
+        {:else if gridType === 'lined'}
+          <!-- Arabic: Continuous Calligraphic Baseline Matrix -->
+          <div class="absolute inset-0 flex flex-col justify-center pointer-events-none p-4">
+            <svg class="w-full h-full opacity-25" preserveAspectRatio="none" viewBox="0 0 1000 400">
+              <line x1="0" y1="120" x2="1000" y2="120" stroke="white" stroke-width="1" stroke-dasharray="4,6" />
+              <line x1="0" y1="180" x2="1000" y2="180" stroke={writeColor} stroke-width="1.5" />
+              <line x1="0" y1="240" x2="1000" y2="240" stroke="white" stroke-width="2.5" /> <!-- Primary Baseline (Khat) -->
+              <line x1="0" y1="300" x2="1000" y2="300" stroke="white" stroke-width="1" stroke-dasharray="4,6" />
+            </svg>
+
+            <!-- Arabic Typographic Ghost Guide -->
+            {#if showGuidelines}
+              <div class="absolute inset-0 flex items-center justify-center opacity-20 pointer-events-none" dir="rtl">
+                <span class="font-arabic font-bold text-8xl sm:text-9xl text-white select-none">
+                  {currCard.native}
+                </span>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        <!-- 🌟 THE SINGLE CONTINUOUS HTML5 CANVAS 🌟 -->
         <canvas
           bind:this={canvasEl}
           onmousedown={startDraw}
@@ -905,7 +959,7 @@
           class="absolute inset-0 w-full h-full cursor-crosshair z-10"
         ></canvas>
 
-        <!-- Floating In-Canvas Controls Toolbar -->
+        <!-- Floating In-Canvas Toolbar -->
         <div class="absolute bottom-3 left-3 right-3 flex items-center justify-between z-20 pointer-events-auto">
           <button
             type="button"
@@ -914,10 +968,10 @@
           >
             {#if showGuidelines}
               <EyeOff size={13} />
-              <span>Hide Ghost</span>
+              <span>Hide Guide</span>
             {:else}
               <Eye size={13} />
-              <span>Show Ghost</span>
+              <span>Show Guide</span>
             {/if}
           </button>
 
@@ -943,9 +997,9 @@
       </div>
 
       <!-- Modal Footer -->
-      <div class="flex items-center justify-between pt-2 border-t border-white/10">
+      <div class="flex items-center justify-between pt-2 border-t border-white/10" dir={isRTL ? 'rtl' : 'ltr'}>
         <span class="text-xs font-mono text-white/50">
-          Write full compound: {currCard.native}
+          Target: <strong class="text-white">{currCard.native}</strong>
         </span>
 
         <button
@@ -972,5 +1026,8 @@
   }
   .animate-fade-in {
     animation: fadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  :global(.font-arabic) {
+    font-family: 'Amiri', 'Scheherazade New', 'Noto Naskh Arabic', serif, system-ui;
   }
 </style>

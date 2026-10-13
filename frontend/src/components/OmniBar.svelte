@@ -3,6 +3,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { vocabIndexStore } from '../lib/stores/vocabIndex.svelte.js';
   import { listeningIndexStore } from '../lib/stores/listeningIndex.svelte.js';
+  import { activeLanguage } from '../lib/stores/activeLanguage.svelte.js';
   import { VideoTimerService } from '../lib/services/videoTimerService.js';
   import { canonicalizeVideoUrl } from '../lib/mediaResolver.js';
   import { fetchYouTubeDuration } from '../lib/services/youtubeDurationFetcher.js';
@@ -20,7 +21,7 @@
     CornerDownLeft,
     Film,
     ChevronDown,
-    Sparkles
+    Sparkles 
   } from '@lucide/svelte';
 
   let {
@@ -60,6 +61,10 @@
   let isHovered = $state(false);
 
   let isCompact = $derived(isScrolledPast && !isManuallyOpened);
+
+  // 🌟 Dynamic Language & Directionality Bindings 🌟
+  let langConfig = $derived(activeLanguage.current || {});
+  let isRTL = $derived(langConfig.dir === 'rtl' || (langConfig.code && langConfig.code.startsWith('ar')));
 
   // 🌟 Dynamic Targets Computed via momentumEngine 🌟
   let dynamicGoals = $derived.by(() => {
@@ -112,6 +117,8 @@
   onDestroy(() => {
     if (vocabDebounceTimer) clearTimeout(vocabDebounceTimer);
     if (listeningDebounceTimer) clearTimeout(listeningDebounceTimer);
+    if (ciFetchDebounce) clearTimeout(ciFetchDebounce);
+    if (listFetchDebounce) clearTimeout(listFetchDebounce);
   });
 
   const CATEGORIES = [
@@ -246,39 +253,51 @@
       isPronManuallyEdited = false;
       return;
     }
-    if (!isPronManuallyEdited) {
+    if (!isPronManuallyEdited && !isRTL && typeof vocabIndexStore.predictPronunciation === 'function') {
       vPron = vocabIndexStore.predictPronunciation(vNative) || '';
     }
   }
 
-  let isFetchingDuration = $state(false);
-
-  async function handleCIUrlInput(e) {
-    ciLink = e.target.value;
+  async function checkAndAutoFillCIDuration(url) {
+    if (!url || !url.includes('youtu')) return;
     
-    // 1. Instant check for embedded timestamps (?t=...)
-    const fallback = VideoTimerService.handleUrlInput(ciLink, ciDuration);
-    if (fallback.suggestedDuration) {
-      ciDuration = fallback.suggestedDuration;
-    }
-
-    // 2. Fetch the REAL YouTube video length from the headless player
-    if (ciLink.includes('youtu')) {
-      isFetchingDuration = true;
+    if (ciFetchDebounce) clearTimeout(ciFetchDebounce);
+    ciFetchDebounce = setTimeout(async () => {
+      isFetchingCIDuration = true;
       try {
-        const meta = await fetchYouTubeDuration(ciLink);
-        if (meta && meta.formatted) {
-          ciDuration = meta.formatted; 
+        const result = await fetchYouTubeDuration(url);
+        if (result?.formatted) {
+          ciDuration = result.formatted;
         }
+      } catch (e) {
+        console.warn('Failed to resolve video length:', e);
       } finally {
-        isFetchingDuration = false;
+        isFetchingCIDuration = false;
       }
-    }
+    }, 100);
+  }
+
+  async function checkAndAutoFillListDuration(url) {
+    if (!url || !url.includes('youtu')) return;
+    
+    if (listFetchDebounce) clearTimeout(listFetchDebounce);
+    listFetchDebounce = setTimeout(async () => {
+      isFetchingListDuration = true;
+      try {
+        const result = await fetchYouTubeDuration(url);
+        if (result?.formatted) {
+          listDuration = result.formatted;
+        }
+      } catch (e) {
+        console.warn('Failed to resolve audio length:', e);
+      } finally {
+        isFetchingListDuration = false;
+      }
+    }, 100);
   }
 
   async function handleAutoPaste(e, setterFn) {
     const el = e.target;
-    // Only auto-paste if the input is currently empty to avoid wiping/appending unintentionally
     if (el.value && el.value.trim().length > 0) return;
 
     try {
@@ -290,7 +309,6 @@
         }
       }
     } catch (err) {
-      // Browser blocked permission or clipboard is empty/inaccessible; fail silently
       console.debug('Clipboard auto-read unavailable or denied:', err);
     }
   }
@@ -299,29 +317,31 @@
     listLink = e.target.value;
     triggerListeningDuplicateCheck(listLink);
 
-    // 1. Instant check for embedded timestamps (?t=...)
     const fallback = VideoTimerService.handleUrlInput(listLink, listDuration);
     if (fallback.suggestedDuration) {
       listDuration = fallback.suggestedDuration;
     }
 
-    // 2. Fetch the REAL YouTube video length from the headless player
     if (listLink.includes('youtu')) {
-      isFetchingDuration = true;
+      isFetchingListDuration = true;
       try {
         const meta = await fetchYouTubeDuration(listLink);
         if (meta && meta.formatted) {
           listDuration = meta.formatted; 
         }
       } finally {
-        isFetchingDuration = false;
+        isFetchingListDuration = false;
       }
     }
   }
 
   function resetToAutoPronunciation() {
     isPronManuallyEdited = false;
-    vPron = vocabIndexStore.predictPronunciation(vNative) || '';
+    if (!isRTL && typeof vocabIndexStore.predictPronunciation === 'function') {
+      vPron = vocabIndexStore.predictPronunciation(vNative) || '';
+    } else {
+      vPron = '';
+    }
   }
 
   function selectItemForEdit(idx) {
@@ -336,14 +356,14 @@
         triggerVocabDuplicateCheck(vNative);
       }
     } else if (activeTab === 'ci') {
-      const c = ciActivities.find((x) => x.item_index === idx);
+      const c = ciActivities.find((x) => (x.item_index ?? x.id) === idx);
       if (c) {
         ciLink = c.link || '';
         const sec = c.link_duration ?? c.durationSec ?? c.duration ?? 0;
         ciDuration = sec > 0 ? VideoTimerService.formatDuration(sec) : '';
       }
     } else if (activeTab === 'listening') {
-      const l = listeningActivities.find((x) => x.item_index === idx);
+      const l = listeningActivities.find((x) => (x.item_index ?? x.id) === idx);
       if (l) {
         listLink = l.link || '';
         const sec = l.link_duration ?? l.durationSec ?? l.duration ?? 0;
@@ -351,7 +371,7 @@
         triggerListeningDuplicateCheck(listLink);
       }
     } else {
-      const g = grammarActivities.find((x) => x.item_index === idx);
+      const g = grammarActivities.find((x) => (x.item_index ?? x.id) === idx);
       if (g) {
         const meta = g.metadata || {};
         gTitle = meta.title || '';
@@ -405,7 +425,10 @@
   }
 
   async function handleFormSubmit() {
+    // 🛡️ Strict debounce lock to guarantee no duplicate submissions
+    if (isSubmitting) return;
     isSubmitting = true;
+
     try {
       if (activeTab === 'vocab') {
         const cleanNative = vNative.trim();
@@ -420,9 +443,9 @@
           if (onUpdateWord) await onUpdateWord(selectedIndex, payload);
           statusMessage = `🔄 Updated #${selectedIndex}!`;
         } else {
+          clearInputs();
           if (onAddWord) await onAddWord(payload);
           statusMessage = `✅ Added #${words.length + 1}!`;
-          clearInputs();
           vLinkEl?.focus();
         }
       } else if (activeTab === 'ci') {
@@ -440,9 +463,9 @@
           if (onUpdateCI) await onUpdateCI(selectedIndex, payload);
           statusMessage = `🔄 Updated #${selectedIndex}!`;
         } else {
+          clearInputs();
           if (onAddCI) await onAddCI(payload);
           statusMessage = `✅ Added #${ciActivities.length + 1}!`;
-          clearInputs();
           ciLinkEl?.focus();
         }
       } else if (activeTab === 'listening') {
@@ -461,9 +484,9 @@
           if (onUpdateListening) await onUpdateListening(selectedIndex, payload);
           statusMessage = `🔄 Updated #${selectedIndex}!`;
         } else {
+          clearInputs();
           if (onAddListening) await onAddListening(payload);
           statusMessage = `✅ Added #${listeningActivities.length + 1}!`;
-          clearInputs();
           listLinkEl?.focus();
         }
       } else if (activeTab === 'grammar') {
@@ -484,9 +507,9 @@
           if (onUpdateGrammar) await onUpdateGrammar(selectedIndex, payload);
           statusMessage = `🔄 Updated #${selectedIndex}!`;
         } else {
+          clearInputs();
           if (onAddGrammar) await onAddGrammar(payload);
           statusMessage = `✅ Added #${grammarActivities.length + 1}!`;
-          clearInputs();
           gTitleEl?.focus();
         }
       }
@@ -500,7 +523,9 @@
       console.error('Failed to submit OmniBar item:', err);
       statusMessage = '❌ Error saving';
     } finally {
-      isSubmitting = false;
+      setTimeout(() => {
+        isSubmitting = false;
+      }, 350);
       setTimeout(() => (statusMessage = ''), 2500);
     }
   }
@@ -508,6 +533,7 @@
   function handleKeydown(e, nextEl) {
     if (e.key === 'Enter') {
       e.preventDefault();
+      e.stopPropagation();
       if (nextEl) {
         nextEl.focus();
       } else {
@@ -522,44 +548,6 @@
     if (e.key === '2') switchTab('ci');
     if (e.key === '3') switchTab('listening');
     if (e.key === '4') switchTab('grammar');
-  }
-
-  async function checkAndAutoFillCIDuration(url) {
-    if (!url || !url.includes('youtu')) return;
-    
-    if (ciFetchDebounce) clearTimeout(ciFetchDebounce);
-    ciFetchDebounce = setTimeout(async () => {
-      isFetchingCIDuration = true;
-      try {
-        const result = await fetchYouTubeDuration(url);
-        if (result?.formatted) {
-          ciDuration = result.formatted;
-        }
-      } catch (e) {
-        console.warn('Failed to resolve video length:', e);
-      } finally {
-        isFetchingCIDuration = false;
-      }
-    }, 100);
-  }
-
-  async function checkAndAutoFillListDuration(url) {
-    if (!url || !url.includes('youtu')) return;
-    
-    if (listFetchDebounce) clearTimeout(listFetchDebounce);
-    listFetchDebounce = setTimeout(async () => {
-      isFetchingListDuration = true;
-      try {
-        const result = await fetchYouTubeDuration(url);
-        if (result?.formatted) {
-          listDuration = result.formatted;
-        }
-      } catch (e) {
-        console.warn('Failed to resolve audio length:', e);
-      } finally {
-        isFetchingListDuration = false;
-      }
-    }, 100);
   }
 
   const inputClass = "w-full py-2 px-3.5 rounded-xl sm:rounded-2xl text-xs sm:text-sm font-semibold bg-white/70 dark:bg-white/[0.06] border border-black/[0.08] dark:border-white/[0.14] text-neutral-900 dark:text-white placeholder-neutral-400 dark:placeholder-white/35 outline-none focus:outline-none focus:ring-2 focus:ring-[var(--omni-color)]/25 focus:border-[var(--omni-color)] transition-all shadow-[0_2px_8px_-2px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.3)] box-border min-w-0";
@@ -625,7 +613,7 @@
         </div>
 
         <!-- Telemetry & Controls Dock -->
-        <div class="flex items-center gap-1 sm:gap-1.5 shrink-0">
+        <div class="flex items-center gap-1 sm:gap-1.5 shrink-0" dir="ltr">
           {#if !isEditMode}
             <div class="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-2.5 py-1 rounded-xl sm:rounded-2xl bg-white/50 dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] shadow-[inset_0_1px_2px_rgba(0,0,0,0.03)]">
               <div class="flex items-center gap-1.5">
@@ -646,8 +634,8 @@
             </div>
           {:else}
             <div class="flex items-center gap-1 overflow-x-auto max-w-[130px] sm:max-w-[200px] p-0.5 rounded-xl bg-white/50 dark:bg-white/[0.05] border border-black/[0.06] dark:border-white/[0.08] shrink-0">
-              {#each currentList as item (item.word_index ?? item.item_index ?? item.id)}
-                {@const idx = item.word_index ?? item.item_index ?? item.id}
+              {#each currentList as item, i (`${activeTab}_${item.id ?? item.word_index ?? item.item_index ?? i}_${i}`)}
+                {@const idx = item.word_index ?? item.item_index ?? (i + 1)}
                 {@const isSelected = idx === selectedIndex}
                 <button
                   type="button"
@@ -688,7 +676,7 @@
               
               <!-- 1. VOCABULARY MODE INPUTS -->
               <div class="grid grid-cols-1 md:grid-cols-2 gap-2 w-full box-border {activeTab === 'vocab' ? '' : 'hidden'}">
-                <div class="md:col-span-2 relative flex items-center group w-full min-w-0">
+                <div class="md:col-span-2 relative flex items-center group w-full min-w-0" dir="ltr">
                   {#if activeMediaPreview}
                     <div class="absolute left-2.5 w-6 h-6 rounded-lg overflow-hidden border border-black/10 dark:border-white/20 bg-white dark:bg-black/60 shrink-0 shadow-xs z-10">
                       <img src={activeMediaPreview} alt="" class="w-full h-full object-cover" />
@@ -705,6 +693,7 @@
                   />
                 </div>
 
+                <!-- Native Script Input (Dir-aware) -->
                 <div class="relative flex items-center group w-full min-w-0">
                   <input
                     bind:this={vNativeEl}
@@ -715,22 +704,25 @@
                       vNative = val; 
                       handleNativeInput({ target: { value: val } }); 
                     })}
+                    dir={isRTL ? 'rtl' : 'ltr'}
                     type="text"
-                    placeholder="2. Native script (汉语, 苹果)..."
-                    class={inputClass}
+                    placeholder={isRTL ? "2. الكلمة بالنص العربي (كِتَابٌ، قَهْوَة)..." : "2. Native script (汉语, 苹果)..."}
+                    class="{inputClass} {isRTL ? 'font-arabic text-sm sm:text-base' : ''}"
                   />
 
                   {#if vocabDuplicates.length > 0}
                     <span
                       title="Logged on {vocabDuplicates.map((m) => m.date).join(', ')}"
-                      class="absolute right-2 text-[9px] font-bold font-mono px-1.5 py-0.5 rounded-md bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/30 whitespace-nowrap pointer-events-none shadow-2xs"
+                      class="absolute {isRTL ? 'left-2' : 'right-2'} text-[9px] font-bold font-mono px-1.5 py-0.5 rounded-md bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/30 whitespace-nowrap pointer-events-none shadow-2xs z-20"
+                      dir="ltr"
                     >
                       ⚠️ {vocabDuplicates.length === 1 ? vocabDuplicates[0].date : `${vocabDuplicates.length}x`}
                     </span>
                   {/if}
                 </div>
 
-                <div class="relative flex items-center group w-full min-w-0">
+                <!-- Pronunciation / Transliteration (Always LTR Latin) -->
+                <div class="relative flex items-center group w-full min-w-0" dir="ltr">
                   <input
                     bind:this={vPronEl}
                     value={vPron}
@@ -738,7 +730,7 @@
                     onkeydown={(e) => handleKeydown(e, null)}
                     onfocus={(e) => handleAutoPaste(e, (val) => { vPron = val; isPronManuallyEdited = true; })}
                     type="text"
-                    placeholder="3. Pronunciation (hàn yǔ)..."
+                    placeholder={isRTL ? "3. Transliteration (kitāb, qahwa)..." : "3. Pronunciation (hàn yǔ)..."}
                     class="{inputClass} pr-9 font-mono"
                   />
 
@@ -746,7 +738,7 @@
                     <button
                       type="button"
                       onclick={resetToAutoPronunciation}
-                      title="Reset auto pronunciation"
+                      title="Reset pronunciation"
                       class="absolute right-2 p-1 rounded-md text-neutral-500 dark:text-white/50 hover:text-neutral-900 dark:hover:text-white bg-black/[0.04] dark:bg-white/10 transition-colors cursor-pointer border border-black/[0.08] dark:border-white/10"
                     >
                       <RotateCcw size={11} />
@@ -756,7 +748,7 @@
               </div>
 
               <!-- 2. CI VIDEO MODE INPUTS -->
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-2 w-full box-border {activeTab === 'ci' ? '' : 'hidden'}">
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-2 w-full box-border {activeTab === 'ci' ? '' : 'hidden'}" dir="ltr">
                 <div class="md:col-span-2 relative flex items-center w-full min-w-0">
                   <Film size={14} class="absolute left-3 text-neutral-400 dark:text-white/40 pointer-events-none" />
                   <input
@@ -792,7 +784,7 @@
               </div>
 
               <!-- 3. LISTENING IMMERSION MODE INPUTS -->
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-2 w-full box-border {activeTab === 'listening' ? '' : 'hidden'}">
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-2 w-full box-border {activeTab === 'listening' ? '' : 'hidden'}" dir="ltr">
                 <div class="md:col-span-2 relative flex items-center w-full min-w-0">
                   <Headphones size={14} class="absolute left-3 text-neutral-400 dark:text-white/40 pointer-events-none" />
                   <input
@@ -846,35 +838,36 @@
                   <input
                     bind:this={gTitleEl}
                     bind:value={gTitle}
+                    dir={isRTL ? 'rtl' : 'ltr'}
                     onkeydown={(e) => handleKeydown(e, gPronEl)}
                     onfocus={(e) => handleAutoPaste(e, (val) => { gTitle = val; })}
                     type="text"
-                    placeholder="1. Grammar Point (e.g. 把字句)..."
-                    class={inputClass}
+                    placeholder={isRTL ? "القاعدة النحوية (مثل: المبتدأ والخبر)..." : "Grammar Point (e.g. 把字句)..."}
+                    class="{inputClass} {isRTL ? 'font-arabic' : ''}"
                   />
                 </div>
 
-                <div class="w-full min-w-0">
+                <div class="w-full min-w-0" dir="ltr">
                   <input
                     bind:this={gPronEl}
                     bind:value={gPron}
                     onfocus={(e) => handleAutoPaste(e, (val) => { gPron = val; })}
                     onkeydown={(e) => handleKeydown(e, gStructureEl)}
                     type="text"
-                    placeholder="2. Reading (bǎ zìjù)..."
+                    placeholder="2. Reading / Transliteration..."
                     class="{inputClass} font-mono"
                   />
                 </div>
 
-                <div class="w-full min-w-0">
+                <div class="w-full min-w-0" dir={isRTL ? 'rtl' : 'ltr'}>
                   <input
                     bind:this={gStructureEl}
                     bind:value={gStructure}
                     onfocus={(e) => handleAutoPaste(e, (val) => { gStructure = val; })}
                     onkeydown={(e) => handleKeydown(e, gMeaningEl)}
                     type="text"
-                    placeholder="3. Formula (Subj + 把 + Obj + Verb)..."
-                    class={inputClass}
+                    placeholder={isRTL ? "3. الصياغة (فعل + فاعل + مفعول به)..." : "3. Formula (Subj + 把 + Obj + Verb)..."}
+                    class="{inputClass} {isRTL ? 'font-arabic' : ''}"
                   />
                 </div>
 
@@ -882,15 +875,16 @@
                   <input
                     bind:this={gMeaningEl}
                     bind:value={gMeaning}
+                    dir={isRTL ? 'rtl' : 'ltr'}
                     onfocus={(e) => handleAutoPaste(e, (val) => { gMeaning = val; })}
                     onkeydown={(e) => handleKeydown(e, gLinkEl)}
                     type="text"
-                    placeholder="4. Meaning / Usage explanation..."
-                    class={inputClass}
+                    placeholder={isRTL ? "4. الشرح والاستخدام..." : "4. Meaning / Usage explanation..."}
+                    class="{inputClass} {isRTL ? 'font-arabic' : ''}"
                   />
                 </div>
 
-                <div class="md:col-span-2 w-full min-w-0">
+                <div class="md:col-span-2 w-full min-w-0" dir="ltr">
                   <input
                     bind:this={gLinkEl}
                     bind:value={gLink}
@@ -906,7 +900,7 @@
             </div>
 
             <!-- BOTTOM CONTROLS & SUBMIT -->
-            <div class="flex items-center justify-between gap-2 pt-2 pb-2 border-t border-black/[0.06] dark:border-white/[0.08] relative z-10 w-full min-w-0 box-border">
+            <div class="flex items-center justify-between gap-2 pt-2 pb-2 border-t border-black/[0.06] dark:border-white/[0.08] relative z-10 w-full min-w-0 box-border" dir="ltr">
               <div class="flex items-center gap-2 flex-wrap min-w-0 py-1">
                 <button
                   type="button"
@@ -954,3 +948,9 @@
 
   </div>
 </div>
+
+<style>
+  :global(.font-arabic) {
+    font-family: 'Amiri', 'Scheherazade New', 'Noto Naskh Arabic', serif, system-ui;
+  }
+</style>

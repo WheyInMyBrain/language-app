@@ -73,11 +73,14 @@
     glareY = 50;
   }
 
-  let langConfig = $derived(activeLanguage.current);
+  let langConfig = $derived(activeLanguage.current || {});
   let colors = $derived(activeLanguage.colors || {});
-  let themeColor = $derived(activeLanguage.themeColor || colors.theme || '#a855f7');
+  let themeColor = $derived(activeLanguage.themeColor || colors.theme?.primary || '#a855f7');
   let listeningColor = $derived(colors.listening?.primary || colors.listening?.dark_primary || '#f97316');
   let listeningColorSub = $derived(colors.listening?.light_primary || '#fb923c');
+
+  let effectiveLangCode = $derived(langCode || langConfig?.code || 'zh-CN');
+  let isRTL = $derived(langConfig.dir === 'rtl' || effectiveLangCode.startsWith('ar'));
 
   // Read all listening cards from srsStore.cards
   let allCards = $derived.by(() => {
@@ -110,13 +113,20 @@
   let curInt = $derived(Number(curWord?.interval ?? 0));
   let curEase = $derived(Number(curWord?.ease ?? 2.50));
 
-  // 🌟 SYNCHRONIZED TONE CHROMA ENGINE (Dual line tone matching) 🌟
+  // 🌟 SYNCHRONIZED TONE / HARAKAT CHROMA ENGINE 🌟
   const tokenCache = new Map();
   function getSynchronizedTokens(script, pron, cfg) {
     const key = `${cfg?.code || 'zh-CN'}:${script || ''}:${pron || ''}`;
     if (tokenCache.has(key)) return tokenCache.get(key);
 
-    const parsed = tokenizePhonetics(script, pron, cfg);
+    let parsed = { primaryTokens: [], secondaryTokens: [] };
+
+    if (typeof cfg?.colorize === 'function') {
+      parsed = cfg.colorize(script, pron);
+    } else {
+      parsed = tokenizePhonetics(script, pron, cfg);
+    }
+
     const primary = parsed.primaryTokens || [];
     const secondary = parsed.secondaryTokens || [];
     const coloredSecondary = secondary.filter(t => t.color);
@@ -128,8 +138,8 @@
     });
 
     const result = {
-      primaryTokens: syncedPrimary,
-      secondaryTokens: secondary
+      primaryTokens: syncedPrimary.length > 0 ? syncedPrimary : [{ text: script || '', color: null }],
+      secondaryTokens: secondary.length > 0 ? secondary : [{ text: pron || '', color: null }]
     };
 
     if (tokenCache.size > 800) tokenCache.clear();
@@ -158,7 +168,7 @@
   function handlePlayAudio() {
     if (!curWord) return;
     isPlayingAudio = true;
-    playTTS(curWord.native, langCode || langConfig?.code || 'zh-CN', ttsRate);
+    playTTS(curWord.native, effectiveLangCode, ttsRate);
     setTimeout(() => (isPlayingAudio = false), 1200);
   }
 
@@ -172,7 +182,7 @@
     isSubmitting = true;
 
     try {
-      await srsStore.rateCard(langCode, curWord.key, grade);
+      await srsStore.rateCard(effectiveLangCode, curWord.key, grade);
       isRevealed = false;
     } catch (err) {
       console.error(`[SRS] Failed to grade card "${curWord.key}":`, err);
@@ -221,11 +231,11 @@
 
       <div>
         <h2 class="text-xs sm:text-sm font-black tracking-tight uppercase text-neutral-900 dark:text-white flex items-center gap-1.5">
-          <span>Tone Ear Trainer</span>
+          <span>{isRTL ? 'Acoustic Ear Trainer' : 'Tone Ear Trainer'}</span>
           <span class="w-1.5 h-1.5 rounded-full" style="background-color: {listeningColor}; box-shadow: 0 0 6px {listeningColor};"></span>
         </h2>
         <span class="text-[10px] font-mono text-neutral-500 dark:text-white/40 block">
-          Auditory Tone Perception & Recognition
+          Auditory Perception & Recognition
         </span>
       </div>
     </div>
@@ -347,7 +357,7 @@
         ></div>
 
         <!-- Top Pill Header (Metadata, Due Indicator & Playback Speed Stepper) -->
-        <div class="w-full flex items-center justify-between text-[10px] font-mono font-bold text-neutral-500 dark:text-white/50 relative z-10 flex-wrap gap-2">
+        <div class="w-full flex items-center justify-between text-[10px] font-mono font-bold text-neutral-500 dark:text-white/50 relative z-10 flex-wrap gap-2" dir="ltr">
           <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-black/[0.04] dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/10 shadow-2xs backdrop-blur-md">
             <Calendar size={10} />
             <span>{curWord.source_date ? curWord.source_date.slice(5) : 'Vault'}</span>
@@ -401,7 +411,7 @@
               </div>
             </div>
             <span class="text-[11px] font-mono font-bold text-neutral-400 dark:text-white/40 mt-3 tracking-wide">
-              Listen closely for tone inflection
+              {isRTL ? 'Listen carefully for acoustic vowels & consonants' : 'Listen closely for tone inflection'}
             </span>
           {/if}
         </div>
@@ -418,7 +428,7 @@
             "
           >
             <Volume2 size={15} strokeWidth={2.8} class={isPlayingAudio ? 'animate-pulse' : ''} />
-            <span>Play Tone Audio</span>
+            <span>Play Audio</span>
           </button>
 
           {#if !isRevealed}
@@ -437,16 +447,27 @@
         {#if isRevealed}
           <div class="flex flex-col items-center gap-4 w-full border-t border-black/[0.08] dark:border-white/10 pt-4 relative z-10 animate-in fade-in slide-in-from-bottom-2 duration-200">
             
-            <!-- Synchronized Tone-Colored Character Banner -->
-            <div class="flex items-center justify-between gap-4 p-3.5 sm:p-4 rounded-2xl bg-white/60 dark:bg-black/50 border border-black/[0.08] dark:border-white/15 w-full max-w-md shadow-inner backdrop-blur-md">
-              <div class="flex flex-col items-start gap-1 text-left min-w-0">
-                <div class="text-3xl sm:text-4xl font-black tracking-tight leading-none drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]">
-                  <ColoredText tokens={tokens.primaryTokens} fallbackClass="text-neutral-900 dark:text-white" />
+            <!-- Synchronized Colored Word Banner -->
+            <div 
+              class="flex items-center justify-between gap-4 p-3.5 sm:p-4 rounded-2xl bg-white/60 dark:bg-black/50 border border-black/[0.08] dark:border-white/15 w-full max-w-md shadow-inner backdrop-blur-md"
+              dir={isRTL ? 'rtl' : 'ltr'}
+            >
+              <div class="flex flex-col items-start gap-1 {isRTL ? 'text-right' : 'text-left'} min-w-0">
+                <div class="text-3xl sm:text-4xl font-black tracking-tight leading-normal drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)] {isRTL ? 'font-arabic' : ''}">
+                  <ColoredText 
+                    tokens={tokens.primaryTokens} 
+                    fallbackClass="text-neutral-900 dark:text-white"
+                    lang={effectiveLangCode}
+                  />
                 </div>
 
                 {#if curWord.pronunciation}
-                  <div class="text-sm sm:text-base font-mono font-bold tracking-tight mt-0.5 drop-shadow-[0_1px_4px_rgba(0,0,0,0.5)]">
-                    <ColoredText tokens={tokens.secondaryTokens} fallbackClass="text-neutral-600 dark:text-white/70" />
+                  <div class="text-sm sm:text-base font-mono font-bold tracking-tight mt-0.5 drop-shadow-[0_1px_4px_rgba(0,0,0,0.5)]" dir="ltr">
+                    <ColoredText 
+                      tokens={tokens.secondaryTokens} 
+                      fallbackClass="text-neutral-600 dark:text-white/70"
+                      lang={effectiveLangCode}
+                    />
                   </div>
                 {/if}
               </div>
@@ -462,6 +483,7 @@
                   color: {listeningColor};
                 "
                 title="Replay pronunciation"
+                dir="ltr"
               >
                 <Volume2 size={13} class={isPlayingAudio ? 'animate-pulse' : ''} />
                 <span>Replay</span>
@@ -535,3 +557,9 @@
     </div>
   {/if}
 </div>
+
+<style>
+  :global(.font-arabic) {
+    font-family: 'Amiri', 'Scheherazade New', 'Noto Naskh Arabic', serif, system-ui;
+  }
+</style>

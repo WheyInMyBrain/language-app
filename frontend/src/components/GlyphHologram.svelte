@@ -12,7 +12,7 @@
   import { playTTS } from '../lib/tts.js';
   import { portal } from '../lib/actions/portal.js';
   import GlyphMiniCard from './GlyphMiniCard.svelte';
-  import { Volume2, RotateCcw, X, ArrowRight } from '@lucide/svelte';
+  import { Volume2, RotateCcw, X, ArrowRight, Sparkles } from '@lucide/svelte';
 
   let {
     data = null,
@@ -31,8 +31,10 @@
 
   let langConfig = $derived(activeLanguage.current || {});
   let glyphConfig = $derived(langConfig.glyphConfig || {});
+  let isRTL = $derived(langConfig.dir === 'rtl' || lang.startsWith('ar'));
+  let gridType = $derived(glyphConfig.gridType || 'rice');
 
-  // Tone color for phonetic body / main accents
+  // Tone or Harakat color accent
   let chroma = $derived.by(() => {
     if (typeof glyphConfig.resolveChroma === 'function') {
       return glyphConfig.resolveChroma(data, langConfig.tones);
@@ -43,11 +45,15 @@
     };
   });
 
-  // Radical color from existing user configuration
-  let radicalColor = $derived(
+  // Secondary color for Root / Radical
+  let comp1Color = $derived(
     langConfig.colors?.vocab?.dark_primary || 
     langConfig.colors?.vocab?.primary || 
     '#34d399'
+  );
+
+  let hasStrokeData = $derived(
+    Array.isArray(data?.strokes) && data.strokes.length > 0 && Array.isArray(data?.medians)
   );
 
   let decompInfo = $derived(parseMorphDecomposition(data?.component2 || data?.decomposition));
@@ -56,8 +62,19 @@
   let comp1Char = $derived(data?.component1 || decompInfo.parts[0] || '');
   let comp2Char = $derived(decompInfo.parts[1] || (decompInfo.parts[0] !== data?.component1 ? decompInfo.parts[0] : ''));
 
-  let comp1Center = $derived(getStrokesCentroid(data?.medians, Array.from(comp1Indices)));
-  let comp2Center = $derived(getStrokesCentroid(data?.medians, Array.from(comp2Indices)));
+  let labels = $derived(glyphConfig.labels || {
+    primaryPhonetic: 'Phonetic',
+    component1: 'Root',
+    component2: 'Pattern / Body',
+    mnemonic: 'Mnemonic'
+  });
+
+  let comp1Center = $derived(
+    hasStrokeData ? getStrokesCentroid(data?.medians, Array.from(comp1Indices)) : { x: 512, y: 512 }
+  );
+  let comp2Center = $derived(
+    hasStrokeData ? getStrokesCentroid(data?.medians, Array.from(comp2Indices)) : { x: 512, y: 512 }
+  );
 
   function calculateLengths() {
     if (!data?.medians) return;
@@ -71,7 +88,7 @@
   }
 
   function playAnimation() {
-    if (!data?.strokes) return;
+    if (!hasStrokeData) return;
     if (animTimer) clearTimeout(animTimer);
 
     currentStroke = 0;
@@ -89,12 +106,20 @@
   }
 
   onMount(async () => {
-    calculateLengths();
-    playAnimation();
+    if (hasStrokeData) {
+      calculateLengths();
+      playAnimation();
+    } else {
+      isAnimating = false;
+    }
 
-    const partitions = await resolveMorphPartitions(lang, data);
-    comp1Indices = partitions.comp1Indices;
-    comp2Indices = partitions.comp2Indices;
+    if (typeof resolveMorphPartitions === 'function') {
+      try {
+        const partitions = await resolveMorphPartitions(lang, data);
+        comp1Indices = partitions.comp1Indices || new Set();
+        comp2Indices = partitions.comp2Indices || new Set();
+      } catch (_) {}
+    }
 
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -123,7 +148,7 @@
 >
   <div
     class="relative w-full max-w-4xl rounded-3xl border border-white/15 bg-neutral-900/95 shadow-2xl overflow-hidden flex flex-col p-6 sm:p-7 space-y-5"
-    style="--glyph-accent: {chroma.accentColor}; --radical-color: {radicalColor};"
+    style="--glyph-accent: {chroma.accentColor}; --radical-color: {comp1Color};"
   >
     <!-- Top Accent Line -->
     <div
@@ -131,15 +156,15 @@
       style="background: linear-gradient(90deg, transparent 5%, var(--glyph-accent) 50%, transparent 95%);"
     ></div>
 
-    <!-- 1. TOP HEADER: MAIN CHARACTER + PINYIN + MEANING -->
+    <!-- 1. TOP HEADER: MAIN WORD/CHAR + PHONETIC + DEFINITION -->
     <header class="flex items-start justify-between border-b border-white/10 pb-4">
       <div class="space-y-1">
-        <div class="flex items-center gap-3">
-          <span class="text-4xl sm:text-5xl font-black text-white font-serif">
+        <div class="flex items-center gap-3" dir={isRTL ? 'rtl' : 'ltr'}>
+          <span class="text-4xl sm:text-5xl font-black text-white {isRTL ? 'font-arabic tracking-normal' : 'font-serif'}">
             {data?.character}
           </span>
-          <span class="text-3xl sm:text-4xl font-black font-mono" style="color: var(--glyph-accent);">
-            {data?.phonetic || data?.pinyin || ''}
+          <span class="text-2xl sm:text-3xl font-black font-mono" style="color: var(--glyph-accent);" dir="ltr">
+            {data?.phonetic || data?.pinyin || data?.transliteration || ''}
           </span>
 
           {#if chroma.badgeText}
@@ -150,6 +175,7 @@
                 background-color: color-mix(in srgb, var(--glyph-accent) 15%, transparent);
                 border-color: color-mix(in srgb, var(--glyph-accent) 30%, transparent);
               "
+              dir="ltr"
             >
               {chroma.badgeText}
             </span>
@@ -158,7 +184,7 @@
           <button
             type="button"
             onclick={handlePronounce}
-            class="w-8 h-8 rounded-xl border border-white/15 bg-white/5 hover:bg-white/15 text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
+            class="w-8 h-8 rounded-xl border border-white/15 bg-white/5 hover:bg-white/15 text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all shrink-0"
           >
             <Volume2 size={15} style="color: var(--glyph-accent);" />
           </button>
@@ -172,21 +198,21 @@
       <button
         type="button"
         onclick={onClose}
-        class="w-8 h-8 rounded-full border border-white/10 bg-white/5 hover:bg-white/15 text-white/60 hover:text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
+        class="w-8 h-8 rounded-full border border-white/10 bg-white/5 hover:bg-white/15 text-white/60 hover:text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all shrink-0"
       >
         <X size={16} />
       </button>
     </header>
 
-    <!-- 2. STAGE: LEFT COMPONENT + MAIN STAGE (WITH SPATIAL OVERLAYS) + RIGHT COMPONENT -->
+    <!-- 2. STAGE: COMPONENT 1 + MAIN VIEWPORT + COMPONENT 2 -->
     <div class="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
 
-      <!-- LEFT: Radical / Root Satellite -->
+      <!-- LEFT: Root / Component 1 Satellite -->
       <div class="md:col-span-3 order-2 md:order-1">
         {#if comp1Char}
           <GlyphMiniCard
             char={comp1Char}
-            role={spatial.type === 'horizontal' ? 'Left Radical' : spatial.type === 'vertical' ? 'Top Radical' : 'Radical'}
+            role={labels.component1 || 'Root'}
             accentColor="var(--radical-color)"
             {lang}
             isFocused={focusedComponent === 'comp1'}
@@ -196,108 +222,49 @@
         {/if}
       </div>
 
-      <!-- CENTER: Main Canvas with Spatial Layout Overlay -->
+      <!-- CENTER: Main Stage Viewport -->
       <div class="md:col-span-6 relative aspect-square w-full max-w-[340px] mx-auto rounded-2xl border border-white/15 bg-black/70 shadow-inner p-3 flex items-center justify-center order-1 md:order-2 overflow-hidden">
         
-        <!-- Standard Rice Grid Background -->
-        <svg class="absolute inset-0 w-full h-full pointer-events-none opacity-10" viewBox="0 0 100 100">
-          <line x1="50" y1="0" x2="50" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="3,3" />
-          <line x1="0" y1="50" x2="100" y2="50" stroke="white" stroke-width="0.8" stroke-dasharray="3,3" />
-          <line x1="0" y1="0" x2="100" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="3,3" />
-          <line x1="100" y1="0" x2="0" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="3,3" />
-        </svg>
+        <!-- GRID OVERLAYS -->
+        {#if gridType === 'rice'}
+          <!-- Chinese Mi-Zi-Ge (米字格) -->
+          <svg class="absolute inset-0 w-full h-full pointer-events-none opacity-10" viewBox="0 0 100 100">
+            <line x1="50" y1="0" x2="50" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="3,3" />
+            <line x1="0" y1="50" x2="100" y2="50" stroke="white" stroke-width="0.8" stroke-dasharray="3,3" />
+            <line x1="0" y1="0" x2="100" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="3,3" />
+            <line x1="100" y1="0" x2="0" y2="100" stroke="white" stroke-width="0.8" stroke-dasharray="3,3" />
+          </svg>
+        {:else if gridType === 'lined'}
+          <!-- Arabic Calligraphy Baseline & Proportion Guides (Mizan) -->
+          <svg class="absolute inset-0 w-full h-full pointer-events-none opacity-20" viewBox="0 0 100 100">
+            <line x1="0" y1="30" x2="100" y2="30" stroke="white" stroke-width="0.5" stroke-dasharray="2,3" /> <!-- Ascender Line -->
+            <line x1="0" y1="48" x2="100" y2="48" stroke="var(--glyph-accent)" stroke-width="0.8" />           <!-- Median Line -->
+            <line x1="0" y1="62" x2="100" y2="62" stroke="white" stroke-width="1.2" />                          <!-- Primary Baseline (Khat) -->
+            <line x1="0" y1="78" x2="100" y2="78" stroke="white" stroke-width="0.5" stroke-dasharray="2,3" /> <!-- Descender Line -->
+          </svg>
+        {/if}
 
-        <!-- 🌟 DYNAMIC SPATIAL ANATOMY REGIONS 🌟 -->
-        <svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 1024 1024">
-          {#if spatial.type === 'horizontal'}
-            <!-- Left Half Region -->
-            <rect 
-              x="20" y="20" width="470" height="984" rx="24"
-              fill="var(--radical-color)"
-              opacity={focusedComponent === 'comp1' ? 0.08 : 0.02}
-              stroke="var(--radical-color)"
-              stroke-width={focusedComponent === 'comp1' ? 2 : 1}
-              stroke-dasharray="6,6"
-              class="transition-all duration-300"
-            />
-            <!-- Right Half Region -->
-            <rect 
-              x="534" y="20" width="470" height="984" rx="24"
-              fill="var(--glyph-accent)"
-              opacity={focusedComponent === 'comp2' ? 0.08 : 0.02}
-              stroke="var(--glyph-accent)"
-              stroke-width={focusedComponent === 'comp2' ? 2 : 1}
-              stroke-dasharray="6,6"
-              class="transition-all duration-300"
-            />
-          {:else if spatial.type === 'vertical'}
-            <!-- Top Half Region -->
-            <rect 
-              x="20" y="20" width="984" height="470" rx="24"
-              fill="var(--radical-color)"
-              opacity={focusedComponent === 'comp1' ? 0.08 : 0.02}
-              stroke="var(--radical-color)"
-              stroke-width={focusedComponent === 'comp1' ? 2 : 1}
-              stroke-dasharray="6,6"
-              class="transition-all duration-300"
-            />
-            <!-- Bottom Half Region -->
-            <rect 
-              x="20" y="534" width="984" height="470" rx="24"
-              fill="var(--glyph-accent)"
-              opacity={focusedComponent === 'comp2' ? 0.08 : 0.02}
-              stroke="var(--glyph-accent)"
-              stroke-width={focusedComponent === 'comp2' ? 2 : 1}
-              stroke-dasharray="6,6"
-              class="transition-all duration-300"
-            />
-          {:else if spatial.type === 'enclosure'}
-            <!-- Surround Outer Region -->
-            <rect 
-              x="30" y="30" width="964" height="964" rx="32"
-              fill="none"
-              stroke="var(--radical-color)"
-              stroke-width={focusedComponent === 'comp1' ? 3 : 1}
-              opacity={focusedComponent === 'comp1' ? 0.6 : 0.2}
-              stroke-dasharray="6,6"
-              class="transition-all duration-300"
-            />
-            <!-- Inner Sanctum Region -->
-            <rect 
-              x="260" y="260" width="504" height="504" rx="16"
-              fill="none"
-              stroke="var(--glyph-accent)"
-              stroke-width={focusedComponent === 'comp2' ? 3 : 1}
-              opacity={focusedComponent === 'comp2' ? 0.6 : 0.2}
-              stroke-dasharray="4,4"
-              class="transition-all duration-300"
-            />
-          {/if}
-        </svg>
+        <!-- 🌟 BRANCH A: Vector Animated Engine (Chinese / Hanzi) 🌟 -->
+        {#if hasStrokeData}
+          <svg viewBox="0 0 1024 1024" class="w-full h-full drop-shadow-xl relative z-10">
+            <defs>
+              {#if data?.strokes}
+                {#each data.strokes as strokeD, idx}
+                  <clipPath id="main-clip-{idx}">
+                    <path d={strokeD} transform="scale(1, -1) translate(0, -900)" />
+                  </clipPath>
+                {/each}
+              {/if}
+            </defs>
 
-        <!-- SVG Calligraphy Vector Engine -->
-        <svg viewBox="0 0 1024 1024" class="w-full h-full drop-shadow-xl relative z-10">
-          <defs>
-            {#if data?.strokes}
-              {#each data.strokes as strokeD, idx}
-                <clipPath id="main-clip-{idx}">
-                  <path d={strokeD} transform="scale(1, -1) translate(0, -900)" />
-                </clipPath>
-              {/each}
-            {/if}
-          </defs>
-
-          <!-- Ghost Trace -->
-          <g transform="scale(1, -1) translate(0, -900)" opacity="0.08">
-            {#if data?.strokes}
+            <!-- Ghost Trace -->
+            <g transform="scale(1, -1) translate(0, -900)" opacity="0.08">
               {#each data.strokes as strokeD}
                 <path d={strokeD} fill="white" />
               {/each}
-            {/if}
-          </g>
+            </g>
 
-          <!-- Animated Strokes -->
-          {#if data?.medians}
+            <!-- Animated Medians -->
             {#each data.medians as medianPts, idx}
               {@const isVisible = idx < currentStroke}
               {@const isCurrent = idx === currentStroke - 1 && isAnimating}
@@ -327,54 +294,47 @@
                 />
               </g>
             {/each}
-          {/if}
+          </svg>
 
-          <!-- Direct Targeted Laser Pointers -->
-          {#if focusedComponent === 'comp1'}
-            <g class="animate-pulse">
-              <circle cx={comp1Center.x} cy={comp1Center.y} r="14" fill="none" stroke="var(--radical-color)" stroke-width="3" />
-              <path 
-                d="M {comp1Center.x} {comp1Center.y} L 0 {comp1Center.y}" 
-                fill="none" 
-                stroke="var(--radical-color)" 
-                stroke-width="2.5" 
-                stroke-dasharray="4,4" 
-              />
-            </g>
-          {:else if focusedComponent === 'comp2'}
-            <g class="animate-pulse">
-              <circle cx={comp2Center.x} cy={comp2Center.y} r="14" fill="none" stroke="var(--glyph-accent)" stroke-width="3" />
-              <path 
-                d="M {comp2Center.x} {comp2Center.y} L 1024 {comp2Center.y}" 
-                fill="none" 
-                stroke="var(--glyph-accent)" 
-                stroke-width="2.5" 
-                stroke-dasharray="4,4" 
-              />
-            </g>
-          {/if}
-        </svg>
+          <!-- Replay Button -->
+          <button
+            type="button"
+            onclick={playAnimation}
+            class="absolute bottom-3 right-3 z-20 flex items-center gap-1 px-2.5 py-1 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-[11px] font-mono font-bold text-white transition-all active:scale-90 cursor-pointer backdrop-blur-md"
+          >
+            <RotateCcw size={11} class={isAnimating ? 'animate-spin' : ''} />
+            <span>Replay</span>
+          </button>
 
-        <button
-          type="button"
-          onclick={playAnimation}
-          class="absolute bottom-3 right-3 z-20 flex items-center gap-1 px-2.5 py-1 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-[11px] font-mono font-bold text-white transition-all active:scale-90 cursor-pointer backdrop-blur-md"
-        >
-          <RotateCcw size={11} class={isAnimating ? 'animate-spin' : ''} />
-          <span>Replay</span>
-        </button>
+          <div class="absolute top-3 left-3 z-20 px-2 py-0.5 rounded-lg bg-black/60 border border-white/10 text-[10px] font-mono text-white/60">
+            {Math.min(currentStroke, data?.strokes?.length || 0)} / {data?.strokes?.length || 0}
+          </div>
 
-        <div class="absolute top-3 left-3 z-20 px-2 py-0.5 rounded-lg bg-black/60 border border-white/10 text-[10px] font-mono text-white/60">
-          {Math.min(currentStroke, data?.strokes?.length || 0)} / {data?.strokes?.length || 0}
-        </div>
+        <!-- 🌟 BRANCH B: Typographic Stage (Arabic / Alphabetic) 🌟 -->
+        {:else}
+          <div class="relative z-10 flex flex-col items-center justify-center w-full h-full text-center select-text">
+            <span 
+              class="text-6xl sm:text-7xl font-bold font-arabic leading-relaxed drop-shadow-2xl transition-transform duration-200 hover:scale-105"
+              style="color: var(--glyph-accent);"
+              dir={isRTL ? 'rtl' : 'ltr'}
+            >
+              {data?.character}
+            </span>
+            {#if data?.root || comp1Char}
+              <span class="mt-2 text-xs font-mono text-white/50 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">
+                {labels.component1}: <strong class="text-white">{data?.root || comp1Char}</strong>
+              </span>
+            {/if}
+          </div>
+        {/if}
       </div>
 
-      <!-- RIGHT: Phonetic / Body Satellite -->
+      <!-- RIGHT: Pattern / Component 2 Satellite -->
       <div class="md:col-span-3 order-3">
         {#if comp2Char}
           <GlyphMiniCard
             char={comp2Char}
-            role={spatial.type === 'horizontal' ? 'Right Body' : spatial.type === 'vertical' ? 'Bottom Body' : 'Component'}
+            role={labels.component2 || 'Pattern'}
             accentColor="var(--glyph-accent)"
             {lang}
             isFocused={focusedComponent === 'comp2'}
@@ -386,10 +346,10 @@
 
     </div>
 
-    <!-- 3. 🌟 SPATIAL FUSION EQUATION BANNER (this + this = this) 🌟 -->
+    <!-- 3. 🌟 GENERALIZED MORPHOLOGY FORMULA BANNER 🌟 -->
     <div class="p-3.5 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-between text-xs font-mono">
       <div class="flex items-center gap-2.5 sm:gap-3 flex-wrap">
-        <!-- Component 1 Chip -->
+        <!-- Part 1 -->
         <span 
           class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border font-bold"
           style="
@@ -398,15 +358,13 @@
             border-color: color-mix(in srgb, var(--radical-color) 30%, transparent);
           "
         >
-          <span class="text-base font-serif font-black">{comp1Char || '—'}</span>
-          <span class="text-[10px] uppercase opacity-75">
-            {spatial.type === 'horizontal' ? 'Left' : spatial.type === 'vertical' ? 'Top' : 'Root'}
-          </span>
+          <span class="text-base {isRTL ? 'font-arabic' : 'font-serif'} font-black">{comp1Char || '—'}</span>
+          <span class="text-[10px] uppercase opacity-75">{labels.component1}</span>
         </span>
 
         <span class="text-white/40 font-bold text-sm">+</span>
 
-        <!-- Component 2 Chip -->
+        <!-- Part 2 -->
         <span 
           class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border font-bold"
           style="
@@ -415,32 +373,31 @@
             border-color: color-mix(in srgb, var(--glyph-accent) 30%, transparent);
           "
         >
-          <span class="text-base font-serif font-black">{comp2Char || '—'}</span>
-          <span class="text-[10px] uppercase opacity-75">
-            {spatial.type === 'horizontal' ? 'Right' : spatial.type === 'vertical' ? 'Bottom' : 'Body'}
-          </span>
+          <span class="text-base {isRTL ? 'font-arabic' : 'font-serif'} font-black">{comp2Char || '—'}</span>
+          <span class="text-[10px] uppercase opacity-75">{labels.component2}</span>
         </span>
 
         <ArrowRight size={14} class="text-white/40" />
 
-        <!-- Target Composite Glyph -->
+        <!-- Full Word -->
         <span class="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-white/10 border border-white/20 text-white font-bold">
-          <span class="text-lg font-serif font-black">{data?.character}</span>
-          <span class="text-[10px] opacity-75 font-mono">{spatial.label}</span>
+          <span class="text-lg {isRTL ? 'font-arabic' : 'font-serif'} font-black">{data?.character}</span>
+          <span class="text-[10px] opacity-75 font-mono">{labels.primaryPhonetic}</span>
         </span>
       </div>
 
-      <!-- Spatial Operator Badge -->
-      <span class="text-[11px] font-mono text-white/40 hidden sm:inline-block">
-        Format: {decompInfo.operator}
-      </span>
+      {#if decompInfo.operator && gridType === 'rice'}
+        <span class="text-[11px] font-mono text-white/40 hidden sm:inline-block">
+          Operator: {decompInfo.operator}
+        </span>
+      {/if}
     </div>
 
-    <!-- 4. ETYMOLOGY MNEMONIC (Placed cleanly below the formula) -->
+    <!-- 4. ETYMOLOGY / ROOT MNEMONIC -->
     {#if data?.mnemonic || data?.etymology_hint}
       <div class="px-4 py-3 rounded-xl bg-white/5 border border-white/5 text-xs text-white/80 flex items-baseline gap-2">
         <span class="font-bold text-white/40 uppercase font-mono text-[10px] tracking-wider shrink-0">
-          Mnemonic
+          {labels.mnemonic || 'Mnemonic'}
         </span>
         <span class="leading-relaxed font-sans">{data.mnemonic || data.etymology_hint}</span>
       </div>
@@ -456,5 +413,8 @@
   }
   .animate-fade-in {
     animation: fadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  :global(.font-arabic) {
+    font-family: 'Amiri', 'Scheherazade New', 'Noto Naskh Arabic', serif, system-ui;
   }
 </style>

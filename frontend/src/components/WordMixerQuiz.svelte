@@ -41,6 +41,10 @@
   let glareY = $state(50);
   let tiltTicking = false;
 
+  let langConfig = $derived(activeLanguage.current || {});
+  let isRTL = $derived(langConfig.dir === 'rtl' || (langCode && langCode.startsWith('ar')));
+  let effectiveLangCode = $derived(langCode || langConfig?.code || 'zh-CN');
+
   function handleCardMouseMove(e, idx) {
     if (activeCardIndex !== idx) activeCardIndex = idx;
     if (tiltTicking) return;
@@ -71,13 +75,21 @@
     glareY = 50;
   }
 
-  // 🌟 SYNCHRONIZED TONE CHROMA ENGINE 🌟
+  // 🌟 SYNCHRONIZED TONE / HARAKAT CHROMA ENGINE 🌟
   const tokenCache = new Map();
   function getSynchronizedTokens(script, pron, cfg) {
     const key = `${cfg?.code || 'zh-CN'}:${script || ''}:${pron || ''}`;
     if (tokenCache.has(key)) return tokenCache.get(key);
 
-    const parsed = tokenizePhonetics(script, pron, cfg);
+    let parsed = { primaryTokens: [], secondaryTokens: [] };
+
+    // If config defines custom colorize method (e.g. ar.js or zh-CN.js)
+    if (typeof cfg?.colorize === 'function') {
+      parsed = cfg.colorize(script, pron);
+    } else {
+      parsed = tokenizePhonetics(script, pron, cfg);
+    }
+
     const primary = parsed.primaryTokens || [];
     const secondary = parsed.secondaryTokens || [];
     const coloredSecondary = secondary.filter(t => t.color);
@@ -89,8 +101,8 @@
     });
 
     const result = {
-      primaryTokens: syncedPrimary,
-      secondaryTokens: secondary
+      primaryTokens: syncedPrimary.length > 0 ? syncedPrimary : [{ text: script || '', color: null }],
+      secondaryTokens: secondary.length > 0 ? secondary : [{ text: pron || '', color: null }]
     };
 
     if (tokenCache.size > 800) tokenCache.clear();
@@ -102,10 +114,9 @@
     selectedCount = defaultCount;
   });
 
-  let langConfig = $derived(activeLanguage.current);
   let pool = $derived(vocabIndexStore.entries || []);
   let colors = $derived(activeLanguage.colors || {});
-  let themeColor = $derived(activeLanguage.themeColor || colors.theme || '#a855f7');
+  let themeColor = $derived(activeLanguage.themeColor || colors.theme?.primary || '#a855f7');
 
   function pickRandomWords(sourceList, count) {
     if (!sourceList || sourceList.length === 0) return [];
@@ -124,7 +135,7 @@
   function forgeNewCombination() {
     mixedWords = pickRandomWords(pool, selectedCount);
     if (scrollTrack) {
-      scrollTrack.scrollTo({ left: 0, behavior: 'smooth' });
+      scrollTrack.scrollTo({ left: isRTL ? scrollTrack.scrollWidth : 0, behavior: 'smooth' });
     }
   }
 
@@ -146,7 +157,7 @@
     e.stopPropagation();
     if (!native) return;
     speakingWord = native;
-    playTTS(native, langCode || langConfig?.code || 'zh-CN');
+    playTTS(native, effectiveLangCode);
     setTimeout(() => {
       if (speakingWord === native) speakingWord = null;
     }, 1200);
@@ -206,7 +217,7 @@
         {/if}
       </button>
 
-      <!-- 🌟 ELEVATED QUANTITY STEPPER (+ / Count / -) 🌟 -->
+      <!-- Quantity Stepper (+ / Count / -) -->
       <div class="flex items-center gap-1.5 px-2 py-1 rounded-2xl bg-black/[0.04] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.1] shadow-inner">
         <button
           type="button"
@@ -248,6 +259,7 @@
   {:else}
     <div
       bind:this={scrollTrack}
+      dir={isRTL ? 'rtl' : 'ltr'}
       class="flex items-center gap-3 w-full overflow-x-auto overscroll-x-contain py-3 px-1 touch-pan-x [perspective:1000px] scroll-smooth no-scrollbar relative z-10"
     >
       {#each mixedWords as item, index (item.word_id || `${item.native_script}-${index}`)}
@@ -255,7 +267,7 @@
         {@const isCardActive = activeCardIndex === index}
         {@const isSpeaking = speakingWord === item.native_script}
 
-        <!-- 🌟 3D TACTILE WORD CARD WITH HARMONIZED THEME BACKLIGHT 🌟 -->
+        <!-- 🌟 3D TACTILE WORD CARD 🌟 -->
         <div
           role="presentation"
           onmousemove={(e) => handleCardMouseMove(e, index)}
@@ -272,7 +284,7 @@
               : '0 4px 18px -4px rgba(0,0,0,0.15)'};
           "
         >
-          <!-- Full-Bleed Artwork Backlight Canvas (Theme Harmonized) -->
+          <!-- Full-Bleed Artwork Backlight Canvas -->
           {#if item.link}
             <div class="pointer-events-none absolute inset-0 rounded-3xl overflow-hidden -z-10">
               <img 
@@ -303,7 +315,7 @@
           ></div>
 
           <!-- Top Header: Index / Date Navigation -->
-          <div class="w-full flex items-center justify-between gap-1 pb-1 relative z-10">
+          <div class="w-full flex items-center justify-between gap-1 pb-1 relative z-10" dir="ltr">
             {#if item.date && onSelectDate}
               <button
                 type="button"
@@ -340,14 +352,22 @@
             />
           </div>
 
-          <!-- Synchronized Tone-Colored Text -->
+          <!-- Synchronized Colored Text -->
           {#if showText}
-            <div class="w-full pt-1.5 space-y-0.5 relative z-10">
-              <div class="w-full text-base font-black truncate leading-tight tracking-tight drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]">
-                <ColoredText tokens={tokens.primaryTokens} fallbackClass="text-neutral-900 dark:text-white" />
+            <div class="w-full pt-1.5 space-y-0.5 relative z-10" dir={isRTL ? 'rtl' : 'ltr'}>
+              <div class="w-full text-base font-black truncate leading-tight tracking-tight drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)] {isRTL ? 'font-arabic' : ''}">
+                <ColoredText 
+                  tokens={tokens.primaryTokens} 
+                  fallbackClass="text-neutral-900 dark:text-white" 
+                  lang={effectiveLangCode}
+                />
               </div>
-              <div class="w-full text-[11px] font-mono font-bold truncate leading-tight drop-shadow-[0_1px_4px_rgba(0,0,0,0.5)]">
-                <ColoredText tokens={tokens.secondaryTokens} fallbackClass="text-neutral-700 dark:text-white/80" />
+              <div class="w-full text-[11px] font-mono font-bold truncate leading-tight drop-shadow-[0_1px_4px_rgba(0,0,0,0.5)]" dir="ltr">
+                <ColoredText 
+                  tokens={tokens.secondaryTokens} 
+                  fallbackClass="text-neutral-700 dark:text-white/80" 
+                  lang={effectiveLangCode}
+                />
               </div>
             </div>
           {/if}
@@ -395,3 +415,9 @@
     </button>
   </div>
 </div>
+
+<style>
+  :global(.font-arabic) {
+    font-family: 'Amiri', 'Scheherazade New', 'Noto Naskh Arabic', serif, system-ui;
+  }
+</style>

@@ -15,13 +15,14 @@
 
   let langConfig = $derived(activeLanguage.current || {});
   let glyphConfig = $derived(langConfig.glyphConfig || null);
+  let isRTL = $derived(langConfig.dir === 'rtl' || lang.startsWith('ar'));
 
-  async function handleCharClick(char, e) {
-    if (!char || !glyphConfig) return;
+  async function handleCharClick(item, e) {
+    if (!item || !glyphConfig) return;
 
-    // Check if the clicked character is inspectable according to this language
+    // Check if the clicked target (character or root word) is inspectable
     const isInspectable = typeof glyphConfig.isInspectable === 'function' 
-      ? glyphConfig.isInspectable(char) 
+      ? glyphConfig.isInspectable(item) 
       : false;
 
     if (!isInspectable) return;
@@ -29,7 +30,7 @@
     e.stopPropagation();
     isLoading = true;
     try {
-      const data = await fetchGlyphDetails(lang, char);
+      const data = await fetchGlyphDetails(lang, item);
       if (data) {
         activeGlyphData = data;
       }
@@ -39,9 +40,26 @@
   }
 </script>
 
-<span class="inline-flex flex-wrap items-baseline">
+<span 
+  class="inline-flex flex-wrap items-baseline gap-x-1"
+  dir={isRTL ? 'rtl' : 'ltr'}
+>
   {#each tokens as token}
-    {#if token.chars && token.chars.length > 0}
+    <!-- RTL Mode (Arabic): Keep whole-word shaping to preserve cursive ligatures -->
+    {#if isRTL}
+      <span
+        role="button"
+        tabindex="0"
+        onclick={(e) => handleCharClick(token.text, e)}
+        onkeydown={(e) => { if (e.key === 'Enter') handleCharClick(token.text, e); }}
+        class="transition-transform duration-100 hover:scale-105 active:scale-95 cursor-pointer inline-block whitespace-nowrap {token.color ? '' : fallbackClass}"
+        style={token.color ? `color: ${token.color};` : ''}
+      >
+        {token.text}
+      </span>
+
+    <!-- LTR / CJK Mode (Chinese): Character-by-character slicing for individual tone inspection -->
+    {:else if token.chars && token.chars.length > 0}
       {#each token.chars as ch}
         <span
           role="button"
